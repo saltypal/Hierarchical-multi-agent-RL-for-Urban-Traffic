@@ -1,0 +1,39 @@
+{
+  "ward_ids": [
+    "ward_070",
+    "ward_071",
+    "ward_072",
+    "ward_017",
+    "ward_018",
+    "ward_019",
+    "ward_020",
+    "ward_007",
+    "ward_008",
+    "ward_009",
+    "ward_010",
+    "ward_011",
+    "ward_012",
+    "ward_013",
+    "ward_014",
+    "ward_015"
+  ],
+  "scenario_ids": [
+    "normal",
+    "peak_congestion",
+    "traffic_surge",
+    "blocked_road",
+    "ambulance_emergency",
+    "vip_convoy",
+    "chaos_mode",
+    "breakdown",
+    "asymmetric_overload",
+    "low_baseline"
+  ],
+  "algorithm": "dqn",
+  "episodes_completed": 400,
+  "obs_dim": 12,
+  "action_dim": 10,
+  "hidden_dim": 64,
+  "training_time_seconds": 3411.834746360779,
+  "timestamp": "2026-05-17T22:10:07"
+}

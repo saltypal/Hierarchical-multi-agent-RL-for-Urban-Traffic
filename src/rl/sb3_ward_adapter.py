@@ -41,13 +41,13 @@ _GymBase = gym.Env if gym is not None else object
 class WardAdapterConfig:
     """Runtime settings for a ward-level RL training adapter."""
 
-    ward_id: str = "ward_001"
+    ward_id: str | list[str] = "ward_001"
     project_root: str = "."
     gui: bool = False  # NEVER True during training
-    scenario_id: str = "normal"
+    scenario_id: str | list[str] = "normal"
     training_mode: bool = True
     decision_interval_steps: int = 5
-    max_simulation_steps: int = 1800
+    max_simulation_steps: int = 360
 
 
 class StableBaselinesWardEnv(_GymBase):
@@ -91,10 +91,23 @@ class StableBaselinesWardEnv(_GymBase):
         self.last_invalid_action = False
         self._rng = random.Random(42)
 
-        # Load ward assets
+        if isinstance(self.config.ward_id, str):
+            self.ward_ids = [self.config.ward_id]
+        else:
+            self.ward_ids = self.config.ward_id
+
+        if isinstance(self.config.scenario_id, str):
+            self.scenario_ids = [self.config.scenario_id]
+        else:
+            self.scenario_ids = self.config.scenario_id
+
+        self.current_ward_id = self.ward_ids[0]
+        self.current_scenario_id = self.scenario_ids[0]
+
+        # Load ward assets for the initial ward
         self._project_root = Path(self.config.project_root)
-        self._ward_edges = self._load_ward_edges()
-        self._zone_type = self._load_zone_type()
+        self._ward_edges = self._load_ward_edges(self.current_ward_id)
+        self._zone_type = self._load_zone_type(self.current_ward_id)
 
         # Reward calculator
         self.reward_calc = WardRewardCalculator(self._zone_type)
@@ -117,26 +130,31 @@ class StableBaselinesWardEnv(_GymBase):
     # Asset loading
     # ------------------------------------------------------------------
 
-    def _load_ward_edges(self) -> list[str]:
+    def _load_ward_edges(self, ward_id: str) -> list[str]:
         """Load spawn candidate edges from boundaries.json."""
         path = (
             self._project_root / "maps" / "processed"
-            / self.config.ward_id / "boundaries.json"
+            / ward_id / "boundaries.json"
         )
         if not path.exists():
             return []
         with path.open("r", encoding="utf-8") as fh:
             boundaries = json.load(fh)
-        return boundaries.get("spawn_candidates", [])
+        candidates = boundaries.get("spawn_candidates", [])
+        # Extract just the edge_id string from the dictionary
+        return [
+            c["edge_id"] if isinstance(c, dict) else str(c)
+            for c in candidates
+        ]
 
-    def _load_zone_type(self) -> str:
+    def _load_zone_type(self, ward_id: str) -> str:
         """Load zone type from ward registry."""
         path = self._project_root / "configs" / "hierarchy" / "ward_registry.json"
         if not path.exists():
             return "mixed"
         with path.open("r", encoding="utf-8") as fh:
             registry = json.load(fh)
-        return registry.get("wards", {}).get(self.config.ward_id, {}).get("zone_type", "mixed")
+        return registry.get("wards", {}).get(ward_id, {}).get("zone_type", "mixed")
 
     # ------------------------------------------------------------------
     # Gymnasium interface
@@ -152,11 +170,20 @@ class StableBaselinesWardEnv(_GymBase):
         self.current_step = 0
         self.held_vehicle_ids.clear()
         self.last_invalid_action = False
+
+        # Randomize ward and scenario for Multi-Ward Training
+        self.current_ward_id = self._rng.choice(self.ward_ids)
+        self.current_scenario_id = self._rng.choice(self.scenario_ids)
+
+        # Update environment dynamics to the newly selected ward
+        self._ward_edges = self._load_ward_edges(self.current_ward_id)
+        self._zone_type = self._load_zone_type(self.current_ward_id)
+        self.reward_calc = WardRewardCalculator(self._zone_type)
         self.reward_calc.reset()
 
         sumocfg = (
             self._project_root / "maps" / "processed"
-            / self.config.ward_id / "ward.sumocfg"
+            / self.current_ward_id / "ward.sumocfg"
         )
 
         if self.sumo_env.is_running:

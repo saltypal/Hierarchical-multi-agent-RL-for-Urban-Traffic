@@ -82,7 +82,7 @@ class Topology:
 
     def get_ward_boundaries(self, ward_id: str) -> dict[str, Any]:
         """Load boundaries.json for a processed ward."""
-        path = self.project_root / "maps" / "processed" / ward_id / "boundaries.json"
+        path = self.project_root / "maps" / os.getenv("HMRL_MAP_DIR", "processed") / ward_id / "boundaries.json"
         if not path.exists():
             return {"valid_ingress_edges": [], "valid_egress_edges": [], "spawn_candidates": []}
         with path.open("r", encoding="utf-8") as fh:
@@ -173,7 +173,7 @@ class Topology:
 
         net_files = []
         for wid in ward_ids:
-            net = self.project_root / "maps" / "processed" / wid / "ward.net.xml"
+            net = self.project_root / "maps" / os.getenv("HMRL_MAP_DIR", "processed") / wid / "ward.net.xml"
             if not net.exists():
                 raise FileNotFoundError(f"Network not found for {wid}: {net}")
             net_files.append(str(net))

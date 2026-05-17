@@ -95,12 +95,16 @@ class AreaForecaster:
         self.ward_ids = topology.get_area_wards(area_id)
         self.n_wards = len(self.ward_ids)
 
-        # Build normalised adjacency matrix
-        adj_np = topology.get_adjacency_matrix(area_id)
-        self.a_hat = torch.tensor(adj_np, dtype=torch.float32)
+        # Set up dynamic device selection (GPU-accelerated GNN)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        logger.info("AreaForecaster [%s] using device: %s", area_id, self.device)
 
-        # Initialise model
-        self.model = WardPressureGNN(in_features=NODE_FEATURES + 1)
+        # Build normalised adjacency matrix and move to device
+        adj_np = topology.get_adjacency_matrix(area_id)
+        self.a_hat = torch.tensor(adj_np, dtype=torch.float32).to(self.device)
+
+        # Initialise model and move to device
+        self.model = WardPressureGNN(in_features=NODE_FEATURES + 1).to(self.device)
         self.model.eval()
 
         # Load pre-trained weights if available
@@ -130,7 +134,7 @@ class AreaForecaster:
             Dict mapping ward_id → predicted pressure ∈ [0, 1].
         """
         x = self._build_features(ward_summaries, city_cap)
-        x_tensor = torch.tensor(x, dtype=torch.float32)
+        x_tensor = torch.tensor(x, dtype=torch.float32).to(self.device)
 
         with torch.no_grad():
             predictions = self.model(x_tensor, self.a_hat)
@@ -210,8 +214,8 @@ class AreaForecaster:
         for epoch in range(epochs):
             epoch_loss = 0.0
             for sample in dataset:
-                x = torch.tensor(sample["features"], dtype=torch.float32)
-                y = torch.tensor(sample["target"], dtype=torch.float32)
+                x = torch.tensor(sample["features"], dtype=torch.float32).to(self.device)
+                y = torch.tensor(sample["target"], dtype=torch.float32).to(self.device)
 
                 pred = self.model(x, self.a_hat)
                 loss = loss_fn(pred, y)

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<viewsettings>
+    <scheme name="real world">
+        <opengl render="1"/>
+        <background backgroundColor="black" showGrid="0" gridXSize="100.00" gridYSize="100.00"/>
+        <edges>
+            <edge edgeName="edge_name" edgeNameSize="60" edgeNameColor="255,255,255" />
+        </edges>
+        <vehicles vehicleMode="4" vehicleScaleMode="0" vehicleSize="1.50"/>
+        <!-- Real world aesthetic road coloring -->
+        <polygons>
+            <polygon polygonMode="0" />
+        </polygons>
+        <colorScheme name="real world">
+            <!-- Road and intersection colors (Dark Mode Aesthetic) -->
+            <entry color="50,50,50,255" name="normal_road"/>
+            <entry color="40,40,40,255" name="unknown"/>
+            <entry color="60,60,60,255" name="junction"/>
+        </colorScheme>
+    </scheme>
+    <delay value="100"/>
+</viewsettings>

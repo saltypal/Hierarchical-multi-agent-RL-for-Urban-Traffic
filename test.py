@@ -48,8 +48,8 @@ def main():
     )
     parser.add_argument(
         "--id", "-i",
-        default="ward_001",
-        help="Identifier of the scope (e.g. ward_001, Basavanagudi, Jayanagar)."
+        default="ward_070",
+        help="Identifier of the scope (e.g. ward_070, HSR_Layout, Jayanagar)."
     )
     
     # 2. Demand and simulation parameters
@@ -61,8 +61,8 @@ def main():
     )
     parser.add_argument(
         "--scenario",
-        default="normal",
-        help="Traffic scenario profile to spawn (normal, peak, incident)."
+        default="chaos_mode",
+        help="Traffic scenario profile to spawn (normal, peak_congestion, chaos_mode)."
     )
     parser.add_argument(
         "--ticks", "-t",
@@ -80,7 +80,7 @@ def main():
     parser.add_argument(
         "--delay", "-d",
         type=float,
-        default=250.0,
+        default=100.0,
         help="SUMO GUI step delay in milliseconds (makes cars watchable)."
     )
     parser.add_argument(

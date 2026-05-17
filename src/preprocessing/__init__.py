@@ -4,12 +4,6 @@ This package must stay independent from RL, RSU control, PPO/DQN training,
 and TraCI vehicle-control logic.
 """
 
-from .od_matrix import (
-    DEFAULT_SCENARIO_ID,
-    ODMatrixResult,
-    build_area_od_matrix,
-    generate_and_write_area_od_matrix,
-)
 from .map_pipeline import (
     AreaPaths,
     build_area_paths,
@@ -35,13 +29,9 @@ from .ward_processor import (
 __all__ = [
     # Legacy area-based pipeline
     "AreaPaths",
-    "DEFAULT_SCENARIO_ID",
-    "ODMatrixResult",
-    "build_area_od_matrix",
     "build_area_paths",
     "build_pipeline_report",
     "ensure_maps_scaffold",
-    "generate_and_write_area_od_matrix",
     "load_maps_catalog",
     "write_pipeline_report",
     # Ward-based pipeline
@@ -55,3 +45,4 @@ __all__ = [
     "process_ward",
     "validate_osm_file",
 ]
+

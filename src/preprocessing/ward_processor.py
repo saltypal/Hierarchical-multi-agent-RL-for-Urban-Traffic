@@ -26,9 +26,12 @@ logger = logging.getLogger(__name__)
 # Path helpers
 # ------------------------------------------------------------------
 
+import os
+
 def ward_processed_dir(project_root: Path, ward_id: str) -> Path:
     """Return the processed asset directory for a ward."""
-    return project_root / "maps" / "processed" / ward_id
+    map_dir = os.getenv("HMRL_MAP_DIR", "processed")
+    return project_root / "maps" / map_dir / ward_id
 
 
 def ward_osm_path(project_root: Path, ward_id: str) -> Path:
@@ -45,7 +48,7 @@ def ward_net_path(project_root: Path, ward_id: str) -> Path:
 # OSM → SUMO network conversion
 # ------------------------------------------------------------------
 
-def convert_osm_to_net(ward_id: str, project_root: Path) -> Path:
+def convert_osm_to_net(ward_id: str, project_root: Path, extra_netconvert_args: list[str] | None = None) -> Path:
     """Run ``netconvert`` to compile a ward OSM file into a SUMO network.
 
     Returns:
@@ -64,6 +67,8 @@ def convert_osm_to_net(ward_id: str, project_root: Path) -> Path:
         "--osm-files", str(osm_path),
         "--output-file", str(net_path),
         "--junctions.join",
+        "--junctions.join-same", "1.0",
+        "--edges.join",
         "--ramps.guess",
         "--tls.guess-signals",
         "--tls.discard-simple",
@@ -71,6 +76,9 @@ def convert_osm_to_net(ward_id: str, project_root: Path) -> Path:
         "--roundabouts.guess",
         "--no-turnarounds",
     ]
+    if extra_netconvert_args:
+        cmd.extend(extra_netconvert_args)
+
 
     logger.info("Running netconvert for %s", ward_id)
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -188,34 +196,47 @@ def detect_ward_boundaries(ward_id: str, project_root: Path, strict_mode: bool =
         junction_out_degree[from_j] = junction_out_degree.get(from_j, 0) + 1
         junction_in_degree[to_j] = junction_in_degree.get(to_j, 0) + 1
 
-    # Classify boundary edges
-    ingress_edges: list[str] = []
-    egress_edges: list[str] = []
-    spawn_candidates: list[str] = []
+    # Classify boundary and internal edges
+    ingress_edges: list[dict[str, Any]] = []
+    egress_edges: list[dict[str, Any]] = []
+    spawn_candidates: list[dict[str, Any]] = []
+    internal_edges: list[dict[str, Any]] = []
+
+    boundary_edge_ids: set[str] = set()
 
     for eid, edata in edges.items():
         from_j = edata["from"]
         to_j = edata["to"]
         from_in = junction_in_degree.get(from_j, 0)
         to_out = junction_out_degree.get(to_j, 0)
+        edge_entry = {"edge_id": eid, "lanes": edata["lanes"]}
 
         # Source-like: junction has no incoming edges → ingress point
         if from_in == 0:
-            ingress_edges.append(eid)
-            spawn_candidates.append(eid)
+            ingress_edges.append(edge_entry)
+            spawn_candidates.append(edge_entry)
+            boundary_edge_ids.add(eid)
 
         # Sink-like: junction has no outgoing edges → egress point
         if to_out == 0:
-            egress_edges.append(eid)
+            egress_edges.append(edge_entry)
+            boundary_edge_ids.add(eid)
+
+    # Internal edges: drivable edges that are neither ingress nor egress
+    for eid, edata in edges.items():
+        if eid not in boundary_edge_ids:
+            internal_edges.append({"edge_id": eid, "lanes": edata["lanes"]})
 
     boundaries: dict[str, Any] = {
         "ward_id": ward_id,
         "total_edges": len(edges),
-        "valid_ingress_edges": sorted(ingress_edges),
-        "valid_egress_edges": sorted(egress_edges),
-        "spawn_candidates": sorted(spawn_candidates),
+        "valid_ingress_edges": sorted(ingress_edges, key=lambda e: e["edge_id"]),
+        "valid_egress_edges": sorted(egress_edges, key=lambda e: e["edge_id"]),
+        "spawn_candidates": sorted(spawn_candidates, key=lambda e: e["edge_id"]),
+        "internal_edges": sorted(internal_edges, key=lambda e: e["edge_id"]),
         "ingress_count": len(ingress_edges),
         "egress_count": len(egress_edges),
+        "internal_edge_count": len(internal_edges),
     }
 
     output_path = ward_processed_dir(project_root, ward_id) / "boundaries.json"
@@ -224,8 +245,8 @@ def detect_ward_boundaries(ward_id: str, project_root: Path, strict_mode: bool =
         fh.write("\n")
 
     logger.info(
-        "Boundaries for %s: %d ingress, %d egress edges (strict_mode=%s)",
-        ward_id, len(ingress_edges), len(egress_edges), strict_mode,
+        "Boundaries for %s: %d ingress, %d egress, %d internal edges (strict_mode=%s)",
+        ward_id, len(ingress_edges), len(egress_edges), len(internal_edges), strict_mode,
     )
     return boundaries
 
@@ -234,7 +255,7 @@ def detect_ward_boundaries(ward_id: str, project_root: Path, strict_mode: bool =
 # Orchestration
 # ------------------------------------------------------------------
 
-def process_ward(ward_id: str, project_root: Path, strict_mode: bool = True) -> dict[str, Any]:
+def process_ward(ward_id: str, project_root: Path, strict_mode: bool = True, extra_netconvert_args: list[str] | None = None) -> dict[str, Any]:
     """Run the full preprocessing pipeline for a single ward.
 
     Steps:
@@ -247,7 +268,7 @@ def process_ward(ward_id: str, project_root: Path, strict_mode: bool = True) -> 
     """
     logger.info("Processing ward: %s", ward_id)
 
-    net_path = convert_osm_to_net(ward_id, project_root)
+    net_path = convert_osm_to_net(ward_id, project_root, extra_netconvert_args=extra_netconvert_args)
     metadata = extract_ward_metadata(ward_id, project_root)
     boundaries = detect_ward_boundaries(ward_id, project_root, strict_mode=strict_mode)
 

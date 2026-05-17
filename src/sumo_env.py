@@ -33,9 +33,21 @@ class SumoEnv:
 
     def start(self, config_path: str, gui: bool = False, delay_ms: float = 150.0) -> None:
         """Start a new SUMO simulation."""
+        # Clean up any leftover/dangling TraCI connections from previous runs/cells
+        try:
+            traci.close()
+        except Exception:
+            pass
+
         binary = "sumo-gui" if gui else "sumo"
         self._config_path = config_path
-        traci.start([binary, "-c", config_path])
+        cmd = [binary, "-c", config_path, "--no-warnings", "--no-step-log"]
+        if gui:
+            gui_cfg = Path(__file__).parent.parent / "configs" / "gui-settings.xml"
+            if gui_cfg.exists():
+                cmd.extend(["--gui-settings-file", str(gui_cfg)])
+                
+        traci.start(cmd)
         self._started = True
         logger.info("SUMO started: %s (gui=%s)", config_path, gui)
 

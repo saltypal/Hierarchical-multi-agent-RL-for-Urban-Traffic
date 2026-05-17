@@ -99,13 +99,31 @@ def build_ward_overpass_query(ward_number: int, city: str = "Bengaluru") -> str:
         f'    ["boundary"="administrative"]\n'
         f'    ["admin_level"="10"]\n'
         f'    ["ward"="{ward_number}"];\n'
-        f')->.ward;\n'
-        f'(\n'
-        f'  way(r.ward)["highway"];\n'
         f');\n'
-        f'(._;>);\n'
+        f'map_to_area->.ward_area;\n'
+        f'(\n'
+        f'  way(area.ward_area)["highway"];\n'
+        f');\n'
+        f'(._;>;);\n'
         f'out meta;\n'
     )
+
+
+def build_relation_overpass_query(relation_id: int) -> str:
+    """Build a precise Overpass QL query using the exact relation ID."""
+    return (
+        f'[out:xml][timeout:120];\n'
+        f'(\n'
+        f'  relation({relation_id});\n'
+        f');\n'
+        f'map_to_area->.ward_area;\n'
+        f'(\n'
+        f'  way(area.ward_area)["highway"];\n'
+        f');\n'
+        f'(._;>;);\n'
+        f'out meta;\n'
+    )
+
 
 
 def build_ward_bbox_query(bbox: dict[str, float]) -> str:
@@ -126,7 +144,7 @@ def build_ward_bbox_query(bbox: dict[str, float]) -> str:
         f'(\n'
         f'  way["highway"]({s},{w},{n},{e});\n'
         f');\n'
-        f'(._;>);\n'
+        f'(._;>;);\n'
         f'out meta;\n'
     )
 
@@ -169,6 +187,7 @@ def fetch_ward_osm(
     ward_id: str,
     output_dir: Path,
     ward_number: int | None = None,
+    osm_relation_id: int | None = None,
     bbox: dict[str, float] | None = None,
     city: str = "Bengaluru",
     force: bool = False,
@@ -176,20 +195,18 @@ def fetch_ward_osm(
     """Download OSM XML for a single ward via an Overpass QL query.
 
     Strategy:
-        1. Build a ward-boundary query using the BBMP admin relation
-           (``admin_level=10``, ``ward=<N>``).  This is the preferred path
-           because it downloads only roads *inside* the true ward polygon.
-        2. If the ward-boundary query returns an empty result (the ward
-           relation may not yet be mapped in OSM), fall back to a bounding-box
-           query if ``bbox`` is supplied.
+        1. If osm_relation_id is provided, fetch exact relation.
+        2. Else build a ward-boundary query using the BBMP admin relation
+           (``admin_level=10``, ``ward=<N>``).
+        3. If no geometry is returned, fall back to a bounding-box query.
 
     Args:
         ward_id: Ward identifier (e.g. ``"ward_070"``).
         output_dir: Directory to save the ``.osm`` file (``maps/raw_osm/``).
         ward_number: Explicit BBMP ward number. Derived from ``ward_id``
             automatically if not provided.
-        bbox: Bounding-box dict with ``south/west/north/east`` keys used as
-            fallback when the ward-boundary query returns no results.
+        osm_relation_id: Explicit OSM relation ID.
+        bbox: Bounding-box dict with ``south/west/north/east`` keys used as fallback.
         city: OSM area name for the city (default ``"Bengaluru"``).
         force: If *True*, re-download even if the file already exists.
 
@@ -206,12 +223,19 @@ def fetch_ward_osm(
     if ward_number is None:
         ward_number = _ward_number_from_id(ward_id)
 
-    # --- Attempt 1: ward-boundary Overpass QL query -------------------------
-    query = build_ward_overpass_query(ward_number, city=city)
-    logger.info(
-        "Downloading OSM for %s (ward=%d) via boundary query → %s",
-        ward_id, ward_number, OVERPASS_INTERPRETER_URL,
-    )
+    # --- Attempt 1: precise relation or ward-boundary Overpass QL query -------------------------
+    if osm_relation_id is not None:
+        query = build_relation_overpass_query(osm_relation_id)
+        logger.info(
+            "Downloading OSM for %s via exact relation ID %d → %s",
+            ward_id, osm_relation_id, OVERPASS_INTERPRETER_URL,
+        )
+    else:
+        query = build_ward_overpass_query(ward_number, city=city)
+        logger.info(
+            "Downloading OSM for %s (ward=%d) via boundary query → %s",
+            ward_id, ward_number, OVERPASS_INTERPRETER_URL,
+        )
     logger.debug("Overpass QL query:\n%s", query)
 
     try:
@@ -270,8 +294,11 @@ def _try_bbox_fallback(
 
 
 def _osm_bytes_are_empty(data: bytes) -> bool:
-    """Return True if the OSM XML response contains no way elements."""
-    # A quick, zero-parse check: a non-empty result always contains "<way"
+    """Return True if the OSM XML response contains no way elements.
+
+    The full response is checked because way elements appear after the
+    node block and may not be within the first few kilobytes.
+    """
     return b"<way" not in data
 
 
@@ -306,12 +333,14 @@ def fetch_all_wards(
     for ward_id, meta in registry["wards"].items():
         bbox = meta.get("bbox")  # optional fallback
         ward_number = meta.get("ward_number")  # optional explicit override
+        osm_relation_id = meta.get("osm_relation_id")  # explicit mapping
 
         try:
             path = fetch_ward_osm(
                 ward_id,
                 output_dir,
                 ward_number=ward_number,
+                osm_relation_id=osm_relation_id,
                 bbox=bbox,
                 city=city,
                 force=force,
@@ -342,9 +371,11 @@ def validate_osm_file(osm_path: Path) -> bool:
     """Basic validity check: file exists and contains OSM XML with road data.
 
     Checks for both the ``<osm`` root element and at least one ``<way``
-    element (a file with only nodes has no usable road geometry).
+    element (a file with only nodes has no usable road geometry). The
+    full file is scanned because way elements appear after the nodes
+    block and may not be present in the first few kilobytes.
     """
     if not osm_path.exists():
         return False
-    content = osm_path.read_bytes()[:2048]
-    return b"<osm" in content.lower() and b"<way" in content
+    content = osm_path.read_bytes()
+    return b"<osm" in content and b"<way" in content
