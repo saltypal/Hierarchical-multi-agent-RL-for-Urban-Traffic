@@ -1,0 +1,194 @@
+{
+  "schema_version": "0.1.0",
+  "description": "TAZ road selection configuration. Road filtering is area-aware, not globally fixed.",
+  "road_class_meaning": {
+    "motorway": "high-speed controlled access roads, usually excluded unless present as an operational corridor boundary",
+    "trunk": "major city through-flow corridors",
+    "primary": "major arterial roads",
+    "secondary": "collector and secondary arterial roads",
+    "tertiary": "local collector roads with meaningful traffic flow",
+    "residential": "local streets, only promoted when needed for TAZ origin anchoring",
+    "service": "parking, access, and low-impact internal roads, usually dropped"
+  },
+  "default_policy": {
+    "include": [
+      "trunk",
+      "primary",
+      "secondary"
+    ],
+    "conditional_include": [
+      "tertiary"
+    ],
+    "exclude": [
+      "service",
+      "path",
+      "track",
+      "pedestrian",
+      "footway",
+      "cycleway",
+      "parking_aisle"
+    ]
+  },
+  "area_road_types": {
+    "central_bengaluru": {
+      "include": [
+        "primary",
+        "secondary",
+        "tertiary"
+      ],
+      "conditional_include": [
+        "residential"
+      ],
+      "exclude": [
+        "service",
+        "parking_aisle"
+      ],
+      "reason": "Dense urban core needs primary and secondary movement, with tertiary roads retained to preserve reachability between compact blocks."
+    },
+    "hsr_layout": {
+      "include": [
+        "primary",
+        "secondary",
+        "tertiary"
+      ],
+      "conditional_include": [
+        "residential"
+      ],
+      "exclude": [
+        "service",
+        "parking_aisle"
+      ],
+      "reason": "Structured grid area where collector roads such as main roads matter for commuter origins and local routing."
+    },
+    "koramangala": {
+      "include": [
+        "primary",
+        "secondary",
+        "tertiary"
+      ],
+      "conditional_include": [
+        "residential"
+      ],
+      "exclude": [
+        "service",
+        "parking_aisle"
+      ],
+      "reason": "Mixed commercial and residential area where tertiary connectors are important for cross-area movement."
+    },
+    "btm_layout": {
+      "include": [
+        "primary",
+        "secondary",
+        "tertiary"
+      ],
+      "conditional_include": [
+        "residential"
+      ],
+      "exclude": [
+        "service"
+      ],
+      "reason": "Connector and residential area feeding Koramangala, Silk Board, and HSR movement."
+    },
+    "bellandur": {
+      "include": [
+        "trunk",
+        "primary",
+        "secondary",
+        "tertiary"
+      ],
+      "conditional_include": [],
+      "exclude": [
+        "residential",
+        "service"
+      ],
+      "reason": "IT corridor congestion is dominated by ORR-style trunk/primary movement and major collectors."
+    },
+    "marathahalli": {
+      "include": [
+        "trunk",
+        "primary",
+        "secondary",
+        "tertiary"
+      ],
+      "conditional_include": [],
+      "exclude": [
+        "residential",
+        "service"
+      ],
+      "reason": "Arterial congestion area with important trunk, primary, and collector interactions."
+    },
+    "indiranagar": {
+      "include": [
+        "primary",
+        "secondary",
+        "tertiary"
+      ],
+      "conditional_include": [
+        "residential"
+      ],
+      "exclude": [
+        "service"
+      ],
+      "reason": "Commercial plus residential area requiring collector roads for realistic access to demand anchors."
+    },
+    "whitefield_edge": {
+      "include": [
+        "trunk",
+        "primary",
+        "secondary",
+        "tertiary"
+      ],
+      "conditional_include": [],
+      "exclude": [
+        "residential",
+        "service"
+      ],
+      "reason": "Office-heavy extension represented at the edge, so through corridors and collectors matter more than micro streets."
+    },
+    "silk_board_region": {
+      "include": [
+        "trunk",
+        "primary",
+        "secondary",
+        "tertiary"
+      ],
+      "conditional_include": [],
+      "exclude": [
+        "residential",
+        "service"
+      ],
+      "reason": "Bottleneck area where trunk, primary, and collector links determine congestion propagation."
+    },
+    "malleshwaram": {
+      "include": [
+        "primary",
+        "secondary",
+        "tertiary"
+      ],
+      "conditional_include": [
+        "residential"
+      ],
+      "exclude": [
+        "service",
+        "parking_aisle"
+      ],
+      "reason": "Traditional urban area where collector streets preserve realistic neighborhood entry and exit."
+    }
+  },
+  "promotion_rules": {
+    "residential": [
+      "Promote only when the edge is adjacent to apartment-heavy origin zones.",
+      "Promote only when it connects a TAZ centroid to the retained operational graph.",
+      "Do not promote dead-end residential micro roads unless needed for reachability validation."
+    ],
+    "tertiary": [
+      "Keep when it links residential origins to primary or secondary roads.",
+      "Keep when it lies on a corridor between selected V1 areas.",
+      "Drop isolated tertiary fragments that do not improve graph connectivity."
+    ],
+    "service": [
+      "Drop by default.",
+      "Promote only for explicitly tagged transport hubs, hospitals, or large office campuses in a later version."
+    ]
+  }
+}

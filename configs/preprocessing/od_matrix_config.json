@@ -1,0 +1,268 @@
+{
+  "schema_version": "0.1.0",
+  "description": "Configurable OD matrix generation inputs. These are synthetic priors until replaced or calibrated with measured traffic data.",
+  "default_output_root": "maps/od_matrices",
+  "scenarios": {
+    "wednesday_morning_office_commute_v1": {
+      "label": "Wednesday morning office commute",
+      "day_type": "weekday",
+      "day_name": "wednesday",
+      "time_window": "07:30-10:30",
+      "dominant_flow": "residential_to_office_tech_parks",
+      "total_vehicle_count": 12000,
+      "seed": 42,
+      "stochastic_jitter": {
+        "enabled": true,
+        "min_multiplier": 0.9,
+        "max_multiplier": 1.1
+      },
+      "same_parent_domain_multiplier": 0.75,
+      "cross_parent_domain_multiplier": 1.0,
+      "corridor_preference": {
+        "orr_influence_corridor": 1.45,
+        "hsr_to_bellandur": 1.35,
+        "bellandur_to_marathahalli": 1.3,
+        "central_to_east_bengaluru": 1.2,
+        "koramangala_to_indiranagar": 1.1,
+        "btm_to_koramangala": 1.05
+      },
+      "parent_domain_flow_bias": {
+        "blr_south->blr_east": 1.35,
+        "blr_central->blr_east": 1.2,
+        "blr_north->blr_east": 1.1
+      },
+      "area_weights": {
+        "central_bengaluru": {
+          "origin_weight": 0.9,
+          "destination_weight": 1.15,
+          "congestion_weight": 1.15,
+          "route_pressure": 1.1,
+          "corridor_density": 1.1,
+          "peak_hour_intensity": 1.15,
+          "tags": [
+            "dense_urban",
+            "commercial"
+          ]
+        },
+        "hsr_layout": {
+          "origin_weight": 1.45,
+          "destination_weight": 0.8,
+          "congestion_weight": 1.05,
+          "route_pressure": 1.1,
+          "corridor_density": 1.05,
+          "peak_hour_intensity": 1.2,
+          "tags": [
+            "residential",
+            "apartment_origin"
+          ]
+        },
+        "koramangala": {
+          "origin_weight": 1.1,
+          "destination_weight": 1.1,
+          "congestion_weight": 1.1,
+          "route_pressure": 1.1,
+          "corridor_density": 1.0,
+          "peak_hour_intensity": 1.1,
+          "tags": [
+            "mixed",
+            "commercial"
+          ]
+        },
+        "btm_layout": {
+          "origin_weight": 1.25,
+          "destination_weight": 0.65,
+          "congestion_weight": 1.0,
+          "route_pressure": 1.05,
+          "corridor_density": 1.0,
+          "peak_hour_intensity": 1.15,
+          "tags": [
+            "residential",
+            "connector"
+          ]
+        },
+        "bellandur": {
+          "origin_weight": 0.75,
+          "destination_weight": 1.65,
+          "congestion_weight": 1.35,
+          "route_pressure": 1.4,
+          "corridor_density": 1.45,
+          "peak_hour_intensity": 1.45,
+          "tags": [
+            "tech_park",
+            "office_destination"
+          ]
+        },
+        "marathahalli": {
+          "origin_weight": 0.8,
+          "destination_weight": 1.45,
+          "congestion_weight": 1.3,
+          "route_pressure": 1.35,
+          "corridor_density": 1.35,
+          "peak_hour_intensity": 1.35,
+          "tags": [
+            "office_destination",
+            "arterial"
+          ]
+        },
+        "indiranagar": {
+          "origin_weight": 1.0,
+          "destination_weight": 1.05,
+          "congestion_weight": 1.05,
+          "route_pressure": 1.0,
+          "corridor_density": 1.0,
+          "peak_hour_intensity": 1.05,
+          "tags": [
+            "commercial",
+            "residential"
+          ]
+        },
+        "whitefield_edge": {
+          "origin_weight": 0.65,
+          "destination_weight": 1.75,
+          "congestion_weight": 1.3,
+          "route_pressure": 1.3,
+          "corridor_density": 1.35,
+          "peak_hour_intensity": 1.35,
+          "tags": [
+            "tech_park",
+            "office_destination"
+          ]
+        },
+        "silk_board_region": {
+          "origin_weight": 0.7,
+          "destination_weight": 0.9,
+          "congestion_weight": 1.5,
+          "route_pressure": 1.5,
+          "corridor_density": 1.45,
+          "peak_hour_intensity": 1.4,
+          "tags": [
+            "bottleneck",
+            "corridor"
+          ]
+        },
+        "malleshwaram": {
+          "origin_weight": 1.15,
+          "destination_weight": 0.75,
+          "congestion_weight": 0.95,
+          "route_pressure": 0.9,
+          "corridor_density": 0.85,
+          "peak_hour_intensity": 1.0,
+          "tags": [
+            "residential",
+            "traditional_urban"
+          ]
+        }
+      }
+    },
+    "wednesday_peak_techpark_maps_v1": {
+      "label": "Wednesday peak demand biased toward tech parks (maps catalog)",
+      "day_type": "weekday",
+      "day_name": "wednesday",
+      "time_window": "08:00-11:00",
+      "dominant_flow": "residential_to_tech_parks",
+      "area_source": "maps_area_catalog",
+      "total_vehicle_count": 18000,
+      "seed": 314,
+      "stochastic_jitter": {
+        "enabled": true,
+        "min_multiplier": 0.88,
+        "max_multiplier": 1.12
+      },
+      "same_parent_domain_multiplier": 0.72,
+      "cross_parent_domain_multiplier": 1.0,
+      "corridor_preference": {
+        "orr_influence_corridor": 1.45,
+        "whitefield_techpark_corridor": 1.4,
+        "hsr_to_bellandur": 1.35,
+        "electronic_city_corridor": 1.3,
+        "central_to_east_bengaluru": 1.2
+      },
+      "parent_domain_flow_bias": {
+        "blr_south->blr_east": 1.35,
+        "blr_north->blr_east": 1.1
+      },
+      "area_weights": {
+        "hsr_layout": {
+          "origin_weight": 1.45,
+          "destination_weight": 0.75,
+          "congestion_weight": 1.1,
+          "route_pressure": 1.1,
+          "corridor_density": 1.05,
+          "peak_hour_intensity": 1.2
+        },
+        "koramangala": {
+          "origin_weight": 1.05,
+          "destination_weight": 1.1,
+          "congestion_weight": 1.1,
+          "route_pressure": 1.05,
+          "corridor_density": 1.0,
+          "peak_hour_intensity": 1.08
+        },
+        "bellandur": {
+          "origin_weight": 0.7,
+          "destination_weight": 1.75,
+          "congestion_weight": 1.35,
+          "route_pressure": 1.45,
+          "corridor_density": 1.45,
+          "peak_hour_intensity": 1.5
+        },
+        "electronic_city": {
+          "origin_weight": 0.75,
+          "destination_weight": 1.65,
+          "congestion_weight": 1.25,
+          "route_pressure": 1.3,
+          "corridor_density": 1.25,
+          "peak_hour_intensity": 1.4
+        },
+        "indiranagar": {
+          "origin_weight": 1.0,
+          "destination_weight": 1.05,
+          "congestion_weight": 1.02,
+          "route_pressure": 1.0,
+          "corridor_density": 1.0,
+          "peak_hour_intensity": 1.05
+        },
+        "whitefield": {
+          "origin_weight": 0.65,
+          "destination_weight": 1.85,
+          "congestion_weight": 1.35,
+          "route_pressure": 1.4,
+          "corridor_density": 1.45,
+          "peak_hour_intensity": 1.45
+        },
+        "silk_board": {
+          "origin_weight": 0.7,
+          "destination_weight": 0.95,
+          "congestion_weight": 1.5,
+          "route_pressure": 1.5,
+          "corridor_density": 1.45,
+          "peak_hour_intensity": 1.45
+        },
+        "tin_factory": {
+          "origin_weight": 0.9,
+          "destination_weight": 0.95,
+          "congestion_weight": 1.2,
+          "route_pressure": 1.2,
+          "corridor_density": 1.15,
+          "peak_hour_intensity": 1.15
+        },
+        "jp_nagar": {
+          "origin_weight": 1.35,
+          "destination_weight": 0.72,
+          "congestion_weight": 1.0,
+          "route_pressure": 0.98,
+          "corridor_density": 0.95,
+          "peak_hour_intensity": 1.12
+        },
+        "hebbal": {
+          "origin_weight": 1.05,
+          "destination_weight": 0.82,
+          "congestion_weight": 1.02,
+          "route_pressure": 1.0,
+          "corridor_density": 0.95,
+          "peak_hour_intensity": 1.05
+        }
+      }
+    }
+  }
+}

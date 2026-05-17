@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HMRL — Hierarchical Traffic Control Dashboard</title>
+  <style>
+    :root {
+      --bg: #0a0e1a;
+      --surface: #111827;
+      --surface2: #1a2236;
+      --border: #1e2d45;
+      --accent: #3b82f6;
+      --accent2: #06b6d4;
+      --accent3: #8b5cf6;
+      --success: #10b981;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --text: #e2e8f0;
+      --text-dim: #64748b;
+      --font: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 13px;
+      min-height: 100vh;
+    }
+
+    /* Top Bar */
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+
+    .topbar h1 {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      color: var(--text);
+    }
+
+    .topbar h1 span {
+      color: var(--accent);
+    }
+
+    .badge {
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+
+    .badge-blue {
+      background: rgba(59, 130, 246, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+
+    .badge-cyan {
+      background: rgba(6, 182, 212, 0.15);
+      color: var(--accent2);
+      border: 1px solid rgba(6, 182, 212, 0.3);
+    }
+
+    .badge-purple {
+      background: rgba(139, 92, 246, 0.15);
+      color: var(--accent3);
+      border: 1px solid rgba(139, 92, 246, 0.3);
+    }
+
+    .ticker {
+      margin-left: auto;
+      color: var(--text-dim);
+      font-size: 12px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      display: inline-block;
+      margin-right: 6px;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.3;
+      }
+    }
+
+    /* Layout */
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-rows: auto auto;
+      gap: 16px;
+      padding: 16px;
+    }
+
+    /* Card */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+    }
+
+    .card-city::before {
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+    }
+
+    .card-area::before {
+      background: linear-gradient(90deg, var(--accent2), var(--accent3));
+    }
+
+    .card-ward::before {
+      background: linear-gradient(90deg, var(--accent3), var(--danger));
+    }
+
+    .card-metrics::before {
+      background: linear-gradient(90deg, var(--success), var(--accent));
+    }
+
+    .card-flow::before {
+      background: linear-gradient(90deg, var(--warn), var(--accent2));
+    }
+
+    .card-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-icon {
+      font-size: 14px;
+    }
+
+    .card-span2 {
+      grid-column: span 2;
+    }
+
+    .card-span3 {
+      grid-column: span 3;
+    }
+
+    /* Metrics row */
+    .metrics-row {
+      display: flex;
+      gap: 12px;
+    }
+
+    .metric {
+      flex: 1;
+      background: var(--surface2);
+      border-radius: 8px;
+      padding: 12px;
+      text-align: center;
+    }
+
+    .metric-value {
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--text);
+      line-height: 1;
+    }
+
+    .metric-label {
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-top: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Ward grid */
+    .ward-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 8px;
+    }
+
+    .ward-card {
+      background: var(--surface2);
+      border-radius: 8px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      transition: border-color 0.3s;
+    }
+
+    .ward-card:hover {
+      border-color: var(--accent);
+    }
+
+    .ward-id {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+
+    .ward-action {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--accent3);
+      margin-bottom: 6px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .progress-bar {
+      height: 4px;
+      border-radius: 2px;
+      background: var(--border);
+      margin-top: 3px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.5s ease;
+    }
+
+    .progress-speed {
+      background: var(--success);
+    }
+
+    .progress-queue {
+      background: var(--danger);
+    }
+
+    .progress-pressure {
+      background: var(--accent3);
+    }
+
+    .ward-stat {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-top: 2px;
+    }
+
+    /* City graph */
+    .city-areas {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .area-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--surface2);
+      border-radius: 8px;
+      padding: 8px 12px;
+    }
+
+    .area-name {
+      width: 100px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .area-bar-wrap {
+      flex: 1;
+    }
+
+    .area-bar {
+      height: 6px;
+      border-radius: 3px;
+      background: var(--border);
+    }
+
+    .area-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.5s ease, background 0.3s;
+    }
+
+    .area-cap {
+      font-size: 11px;
+      font-weight: 700;
+      width: 40px;
+      text-align: right;
+    }
+
+    /* GNN predictions */
+    .gnn-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 6px;
+    }
+
+    .gnn-card {
+      background: var(--surface2);
+      border-radius: 6px;
+      padding: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .gnn-ward {
+      font-size: 10px;
+      color: var(--text-dim);
+    }
+
+    .gnn-pressure {
+      font-size: 18px;
+      font-weight: 800;
+    }
+
+    .gnn-label {
+      font-size: 9px;
+      color: var(--text-dim);
+      margin-top: 1px;
+    }
+
+    /* Flow diagram */
+    .flow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      padding: 8px 0;
+    }
+
+    .flow-layer {
+      background: var(--surface2);
+      border-radius: 10px;
+      padding: 10px 16px;
+      text-align: center;
+      min-width: 120px;
+    }
+
+    .flow-layer-title {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .flow-layer-model {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 2px;
+    }
+
+    .flow-layer-hz {
+      font-size: 10px;
+      margin-top: 4px;
+    }
+
+    .flow-arrow {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      padding: 0 8px;
+    }
+
+    .arrow-up {
+      color: var(--success);
+      font-size: 16px;
+    }
+
+    .arrow-down {
+      color: var(--accent);
+      font-size: 16px;
+    }
+
+    .arrow-label {
+      font-size: 9px;
+      color: var(--text-dim);
+      text-align: center;
+      max-width: 70px;
+    }
+
+    /* Log */
+    .log-area {
+      height: 120px;
+      overflow-y: auto;
+      font-size: 10px;
+      color: var(--text-dim);
+      font-family: monospace;
+      line-height: 1.6;
+    }
+
+    .log-line {
+      padding: 1px 0;
+    }
+
+    .log-city {
+      color: var(--accent);
+    }
+
+    .log-area {
+      color: var(--accent2);
+    }
+
+    .log-ward {
+      color: var(--accent3);
+    }
+
+    .log-ok {
+      color: var(--success);
+    }
+
+    .no-data {
+      color: var(--text-dim);
+      font-style: italic;
+      text-align: center;
+      padding: 20px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="topbar">
+    <h1>HMRL <span>Traffic Intelligence</span></h1>
+    <span class="badge badge-blue">CITY: Graph Optimizer</span>
+    <span class="badge badge-cyan">AREA: GNN Forecaster</span>
+    <span class="badge badge-purple">WARD: PPO RL</span>
+    <div class="ticker">
+      <span class="dot"></span>
+      <span id="tick-label">Tick: 0 | 0.0s elapsed</span>
+    </div>
+  </div>
+
+  <div class="grid">
+
+    <!-- City Layer -->
+    <div class="card card-city">
+      <div class="card-title"><span class="card-icon"></span> City Layer — Graph Flow Optimizer</div>
+      <div class="city-areas" id="city-areas">
+        <div class="no-data">Waiting for simulation...</div>
+      </div>
+    </div>
+
+    <!-- GNN Predictions -->
+    <div class="card card-area">
+      <div class="card-title"><span class="card-icon"></span> Area Layer — GNN Pressure Forecast</div>
+      <div class="gnn-grid" id="gnn-grid">
+        <div class="no-data">Waiting for GNN...</div>
+      </div>
+    </div>
+
+    <!-- Global Metrics -->
+    <div class="card card-metrics">
+      <div class="card-title"><span class="card-icon"></span> Global Metrics</div>
+      <div class="metrics-row">
+        <div class="metric">
+          <div class="metric-value" id="m-vehicles">0</div>
+          <div class="metric-label">Vehicles</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value" id="m-arrived">0</div>
+          <div class="metric-label">Arrived</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value" id="m-speed">0.0</div>
+          <div class="metric-label">Avg Speed m/s</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value" id="m-queue">0</div>
+          <div class="metric-label">Queue</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ward Agents -->
+    <div class="card card-ward card-span3">
+      <div class="card-title"><span class="card-icon">⚡</span> Ward Layer — PPO RL Tactical Agents</div>
+      <div class="ward-grid" id="ward-grid">
+        <div class="no-data">Waiting for ward data...</div>
+      </div>
+    </div>
+
+    <!-- Architecture Flow -->
+    <div class="card card-flow card-span2">
+      <div class="card-title"><span class="card-icon"></span> Bidirectional Control Architecture</div>
+      <div class="flow">
+        <div class="flow-layer" style="border: 1px solid rgba(59,130,246,0.4);">
+          <div class="flow-layer-title" style="color:var(--accent)">City</div>
+          <div class="flow-layer-model">NetworkX MCMF</div>
+          <div class="flow-layer-hz" style="color:var(--accent)">Every 120s</div>
+        </div>
+        <div class="flow-arrow">
+          <span class="arrow-up">↑</span>
+          <span class="arrow-label">Area summaries</span>
+          <span class="arrow-down">↓</span>
+          <span class="arrow-label">Capacity caps</span>
+        </div>
+        <div class="flow-layer" style="border: 1px solid rgba(6,182,212,0.4);">
+          <div class="flow-layer-title" style="color:var(--accent2)">Area</div>
+          <div class="flow-layer-model">GNN Forecaster</div>
+          <div class="flow-layer-hz" style="color:var(--accent2)">Every 30s</div>
+        </div>
+        <div class="flow-arrow">
+          <span class="arrow-up">↑</span>
+          <span class="arrow-label">Ward summaries</span>
+          <span class="arrow-down">↓</span>
+          <span class="arrow-label">Pressure signals</span>
+        </div>
+        <div class="flow-layer" style="border: 1px solid rgba(139,92,246,0.4);">
+          <div class="flow-layer-title" style="color:var(--accent3)">Ward</div>
+          <div class="flow-layer-model">PPO Policy</div>
+          <div class="flow-layer-hz" style="color:var(--accent3)">Every 1s</div>
+        </div>
+        <div class="flow-arrow">
+          <span class="arrow-up">↑</span>
+          <span class="arrow-label">Micro state</span>
+          <span class="arrow-down">↓</span>
+          <span class="arrow-label">Semantic actions</span>
+        </div>
+        <div class="flow-layer" style="border: 1px solid rgba(16,185,129,0.4);">
+          <div class="flow-layer-title" style="color:var(--success)">SUMO</div>
+          <div class="flow-layer-model">TraCI</div>
+          <div class="flow-layer-hz" style="color:var(--success)">1s ticks</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Event Log -->
+    <div class="card card-city">
+      <div class="card-title"><span class="card-icon"></span> Event Log</div>
+      <div class="log-area" id="event-log">
+        <div class="log-line log-ok">Dashboard initialized. Waiting for simulation...</div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const API = 'http://localhost:5050/api/state';
+    const POLL_INTERVAL = 1000; // ms
+    let logLines = ['Dashboard initialized. Waiting for simulation...'];
+
+    function congestionColor(v) {
+      if (v < 0.3) return '#10b981';
+      if (v < 0.6) return '#f59e0b';
+      return '#ef4444';
+    }
+
+    function capColor(cap) {
+      if (cap > 0.7) return '#10b981';
+      if (cap > 0.4) return '#f59e0b';
+      return '#ef4444';
+    }
+
+    function addLog(msg, cls = '') {
+      const ts = new Date().toLocaleTimeString('en-IN', { hour12: false });
+      logLines.unshift(`[${ts}] ${msg}`);
+      if (logLines.length > 50) logLines.pop();
+      const el = document.getElementById('event-log');
+      el.innerHTML = logLines.slice(0, 20).map(l => `<div class="log-line ${cls}">${l}</div>`).join('');
+    }
+
+    function renderCityAreas(state) {
+      const caps = state.city_caps || {};
+      const el = document.getElementById('city-areas');
+      if (!Object.keys(caps).length) {
+        el.innerHTML = '<div class="no-data">No city data yet</div>';
+        return;
+      }
+      el.innerHTML = Object.entries(caps).map(([area, cap]) => {
+        const pct = Math.round(cap * 100);
+        const color = capColor(cap);
+        return `<div class="area-row">
+        <div class="area-name">${area.replace('_', ' ')}</div>
+        <div class="area-bar-wrap">
+          <div class="area-bar">
+            <div class="area-fill" style="width:${pct}%; background:${color}"></div>
+          </div>
+        </div>
+        <div class="area-cap" style="color:${color}">${pct}%</div>
+      </div>`;
+      }).join('');
+    }
+
+    function renderGNN(state) {
+      const preds = state.area_predictions || {};
+      const el = document.getElementById('gnn-grid');
+      if (!Object.keys(preds).length) {
+        el.innerHTML = '<div class="no-data">GNN not active yet</div>';
+        return;
+      }
+      el.innerHTML = Object.entries(preds).map(([ward, pressure]) => {
+        const pct = Math.round(pressure * 100);
+        const color = congestionColor(pressure);
+        return `<div class="gnn-card">
+        <div class="gnn-ward">${ward}</div>
+        <div class="gnn-pressure" style="color:${color}">${pct}%</div>
+        <div class="gnn-label">predicted pressure</div>
+      </div>`;
+      }).join('');
+    }
+
+    function renderWards(state) {
+      const wards = state.ward_states || {};
+      const actions = state.ward_actions || {};
+      const rewards = state.ward_rewards || {};
+      const el = document.getElementById('ward-grid');
+      if (!Object.keys(wards).length) {
+        el.innerHTML = '<div class="no-data">No ward data yet</div>';
+        return;
+      }
+      el.innerHTML = Object.entries(wards).map(([wid, ws]) => {
+        const action = (actions[wid] || 'no_op').replace(/_/g, ' ');
+        const reward = (rewards[wid] || 0).toFixed(2);
+        const speed = ws.avg_speed || 0;
+        const congestion = ws.congestion || 0;
+        const pressure = ws.pressure || 0;
+        const speedPct = Math.min(100, speed / 20 * 100);
+        const queuePct = Math.min(100, congestion * 100);
+        const pressPct = Math.min(100, pressure * 100);
+        return `<div class="ward-card">
+        <div class="ward-id">${wid}</div>
+        <div class="ward-action">${action}</div>
+        <div class="ward-stat"><span>speed</span><span>${speed.toFixed(1)} m/s</span></div>
+        <div class="progress-bar"><div class="progress-fill progress-speed" style="width:${speedPct}%"></div></div>
+        <div class="ward-stat"><span>queue</span><span>${(congestion * 100).toFixed(0)}%</span></div>
+        <div class="progress-bar"><div class="progress-fill progress-queue" style="width:${queuePct}%"></div></div>
+        <div class="ward-stat"><span>GNN ▲</span><span>${(pressure * 100).toFixed(0)}%</span></div>
+        <div class="progress-bar"><div class="progress-fill progress-pressure" style="width:${pressPct}%"></div></div>
+        <div class="ward-stat" style="margin-top:4px"><span>reward</span><span style="color:${reward > 0 ? '#10b981' : '#ef4444'}">${reward}</span></div>
+      </div>`;
+      }).join('');
+    }
+
+    function renderMetrics(state) {
+      const m = state.metrics || {};
+      document.getElementById('m-vehicles').textContent = m.total_vehicles || 0;
+      document.getElementById('m-arrived').textContent = state.total_arrived || 0;
+      document.getElementById('m-speed').textContent = (m.avg_speed || 0).toFixed(1);
+      document.getElementById('m-queue').textContent = m.total_queue || 0;
+      document.getElementById('tick-label').textContent =
+        `Tick: ${state.tick || 0} | ${(state.elapsed || 0).toFixed(1)}s elapsed | ${state.scenario || ''} | ${state.scope}:${state.identifier}`;
+    }
+
+    async function poll() {
+      try {
+        const res = await fetch(API);
+        if (!res.ok) throw new Error('not ok');
+        const state = await res.json();
+        renderCityAreas(state);
+        renderGNN(state);
+        renderWards(state);
+        renderMetrics(state);
+      } catch (e) {
+        document.getElementById('tick-label').textContent = '⚠ Dashboard server offline — run: python dashboard/server.py';
+      }
+    }
+
+    poll();
+    setInterval(poll, POLL_INTERVAL);
+  </script>
+</body>
+
+</html>

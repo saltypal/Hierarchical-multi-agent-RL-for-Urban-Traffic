@@ -1,0 +1,95 @@
+{
+  "schema_version": "0.1.0",
+  "description": "Metadata contract for map processing and route generation artifacts.",
+  "region": {
+    "region_id": "string",
+    "label": "string",
+    "folder": "string",
+    "processing_level": "detailed|mixed|coarse",
+    "area_ids": [
+      "string"
+    ],
+    "corridor_ids": [
+      "string"
+    ],
+    "graph_artifacts": {
+      "raw_osm": "path|null",
+      "filtered_graph": "path|null",
+      "sumo_net": "path|null"
+    }
+  },
+  "area": {
+    "area_id": "string",
+    "label": "string",
+    "region_id": "string",
+    "area_type": "string",
+    "processing_level": "detailed|coarse",
+    "road_filter_profile_id": "string",
+    "semantic_stats": {
+      "residential_score": "number",
+      "office_score": "number",
+      "commercial_score": "number",
+      "transit_score": "number",
+      "industrial_score": "number"
+    },
+    "traffic_calibration": {
+      "congestion_weight": "number",
+      "route_pressure": "number",
+      "corridor_density": "number",
+      "peak_hour_intensity": "number",
+      "source": "tomtom|manual|synthetic|mixed"
+    }
+  },
+  "taz": {
+    "taz_id": "string",
+    "area_id": "string",
+    "region_id": "string",
+    "taz_type": "residential|office|mixed|commercial|connector|corridor|transit|industrial",
+    "polygon_artifact": "path",
+    "centroid": {
+      "lat": "number",
+      "lon": "number"
+    },
+    "nearest_edge_ids": [
+      "string"
+    ],
+    "origin_weight": "number",
+    "destination_weight": "number"
+  },
+  "od_matrix_entry": {
+    "scenario_id": "string",
+    "origin_area_id": "string",
+    "destination_area_id": "string",
+    "origin_taz_id": "string",
+    "destination_taz_id": "string",
+    "probability": "number",
+    "expected_vehicle_count": "number",
+    "time_window": "string",
+    "day_type": "weekday|weekend|holiday",
+    "calibration_features": {
+      "congestion_weight": "number",
+      "route_pressure": "number",
+      "corridor_density": "number",
+      "peak_hour_intensity": "number"
+    }
+  },
+  "route_artifact": {
+    "scenario_id": "string",
+    "route_file": "path",
+    "trips_file": "path",
+    "sumo_config_file": "path",
+    "route_generation_method": "duarouter|randomTrips|custom_probabilistic",
+    "validation_report": "path"
+  },
+  "validation_report": {
+    "stage": "string",
+    "status": "pass|fail|warning",
+    "checks": [
+      {
+        "check_id": "string",
+        "status": "pass|fail|warning",
+        "message": "string"
+      }
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+# Core
+numpy
+torch
+traci
+
+# RL
+stable-baselines3
+gymnasium
+
+# Graph optimization (city controller)
+networkx
+
+# Notebooks & visualization
+jupyter
+matplotlib
+pandas
+
+# HTTP requests (OSM fetcher)
+requests
