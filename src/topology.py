@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -50,14 +51,12 @@ class Topology:
             return json.load(fh)
 
     def _build_area_mapping(self) -> None:
-        """Build ward↔area lookup tables from the region hierarchy."""
-        for _region_id, areas in self.blr_regions.get("blr_regions", {}).items():
-            for area_id, area_meta in areas.items():
-                ward_numbers = area_meta.get("wards", [])
-                ward_ids = [f"ward_{w:03d}" for w in ward_numbers]
-                self._area_to_wards[area_id] = ward_ids
-                for wid in ward_ids:
-                    self._ward_to_area[wid] = area_id
+        """Build ward<->area lookup tables from the ward registry."""
+        for area_id, area_meta in self.ward_registry.get("areas", {}).items():
+            ward_ids = area_meta.get("wards", [])
+            self._area_to_wards[area_id] = ward_ids
+            for wid in ward_ids:
+                self._ward_to_area[wid] = area_id
 
     # ------------------------------------------------------------------
     # Ward queries
@@ -157,7 +156,11 @@ class Topology:
     # Map stitching
     # ------------------------------------------------------------------
 
-    def stitch_ward_maps(self, ward_ids: list[str]) -> Path:
+    def stitch_ward_maps(
+        self,
+        ward_ids: list[str],
+        output_name: str | None = None,
+    ) -> Path:
         """Merge multiple ward networks into a single SUMO net file.
 
         Uses netconvert to concatenate ward networks, merging boundary
@@ -178,9 +181,10 @@ class Topology:
                 raise FileNotFoundError(f"Network not found for {wid}: {net}")
             net_files.append(str(net))
 
-        # Derive area name from first ward's registry entry
-        area_id = self._ward_to_area.get(ward_ids[0], "area")
-        output_dir = self.project_root / "maps" / "stitched" / "area"
+        # Derive a stable output label from the first ward unless the caller
+        # supplies a custom name for a multi-area deployment.
+        area_id = output_name or self._ward_to_area.get(ward_ids[0], "area")
+        output_dir = self.project_root / "maps" / "stitched" / area_id
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"{area_id}.net.xml"
 

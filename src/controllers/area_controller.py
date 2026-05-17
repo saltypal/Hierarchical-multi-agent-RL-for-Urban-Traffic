@@ -215,7 +215,14 @@ class AreaForecaster:
             epoch_loss = 0.0
             for sample in dataset:
                 x = torch.tensor(sample["features"], dtype=torch.float32).to(self.device)
+                if x.dim() == 1:
+                    x = x.unsqueeze(0).repeat(self.n_wards, 1)
+                
                 y = torch.tensor(sample["target"], dtype=torch.float32).to(self.device)
+                if y.dim() == 0:
+                    y = y.expand(self.n_wards)
+                elif y.dim() == 1 and y.numel() == 1:
+                    y = y.expand(self.n_wards)
 
                 pred = self.model(x, self.a_hat)
                 loss = loss_fn(pred, y)
@@ -250,10 +257,14 @@ class AreaForecaster:
         logger.info("GNN model saved → %s", model_path)
 
     def _load_model(self, model_dir: Path) -> None:
-        model_path = model_dir / "area_model.pt"
-        if model_path.exists():
+        candidate_paths = [
+            model_dir / self.area_id / "area_model.pt",
+            model_dir / "area_model.pt",
+        ]
+        model_path = next((p for p in candidate_paths if p.exists()), None)
+        if model_path is not None:
             self.model.load_state_dict(
-                torch.load(model_path, weights_only=True)
+                torch.load(model_path, map_location=self.device, weights_only=True)
             )
             self.model.eval()
             logger.info("GNN model loaded ← %s", model_path)

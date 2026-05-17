@@ -28,9 +28,14 @@ logger = logging.getLogger(__name__)
 
 import os
 
-def ward_processed_dir(project_root: Path, ward_id: str) -> Path:
+
+def ward_processed_dir(
+    project_root: Path,
+    ward_id: str,
+    output_dir_name: str | None = None,
+) -> Path:
     """Return the processed asset directory for a ward."""
-    map_dir = os.getenv("HMRL_MAP_DIR", "processed")
+    map_dir = output_dir_name or os.getenv("HMRL_MAP_DIR", "processed")
     return project_root / "maps" / map_dir / ward_id
 
 
@@ -39,16 +44,27 @@ def ward_osm_path(project_root: Path, ward_id: str) -> Path:
     return project_root / "maps" / "raw_osm" / f"{ward_id}.osm"
 
 
-def ward_net_path(project_root: Path, ward_id: str) -> Path:
+def ward_net_path(
+    project_root: Path,
+    ward_id: str,
+    output_dir_name: str | None = None,
+) -> Path:
     """Return the compiled net.xml path for a ward."""
-    return ward_processed_dir(project_root, ward_id) / "ward.net.xml"
+    return ward_processed_dir(
+        project_root, ward_id, output_dir_name=output_dir_name,
+    ) / "ward.net.xml"
 
 
 # ------------------------------------------------------------------
 # OSM → SUMO network conversion
 # ------------------------------------------------------------------
 
-def convert_osm_to_net(ward_id: str, project_root: Path, extra_netconvert_args: list[str] | None = None) -> Path:
+def convert_osm_to_net(
+    ward_id: str,
+    project_root: Path,
+    output_dir_name: str | None = None,
+    extra_netconvert_args: list[str] | None = None,
+) -> Path:
     """Run ``netconvert`` to compile a ward OSM file into a SUMO network.
 
     Returns:
@@ -58,7 +74,9 @@ def convert_osm_to_net(ward_id: str, project_root: Path, extra_netconvert_args: 
     if not osm_path.exists():
         raise FileNotFoundError(f"OSM file not found: {osm_path}")
 
-    output_dir = ward_processed_dir(project_root, ward_id)
+    output_dir = ward_processed_dir(
+        project_root, ward_id, output_dir_name=output_dir_name,
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     net_path = output_dir / "ward.net.xml"
 
@@ -95,7 +113,11 @@ def convert_osm_to_net(ward_id: str, project_root: Path, extra_netconvert_args: 
 # Metadata extraction
 # ------------------------------------------------------------------
 
-def extract_ward_metadata(ward_id: str, project_root: Path) -> dict[str, Any]:
+def extract_ward_metadata(
+    ward_id: str,
+    project_root: Path,
+    output_dir_name: str | None = None,
+) -> dict[str, Any]:
     """Parse the compiled net.xml and extract structural metadata.
 
     Combines network statistics with ward registry information.
@@ -103,7 +125,9 @@ def extract_ward_metadata(ward_id: str, project_root: Path) -> dict[str, Any]:
     Returns:
         Metadata dictionary, also written to ``metadata.json``.
     """
-    net_path = ward_net_path(project_root, ward_id)
+    net_path = ward_net_path(
+        project_root, ward_id, output_dir_name=output_dir_name,
+    )
     registry = load_ward_registry(project_root)
     ward_meta = registry["wards"].get(ward_id, {})
 
@@ -121,7 +145,9 @@ def extract_ward_metadata(ward_id: str, project_root: Path) -> dict[str, Any]:
         "network": net_summary,
     }
 
-    output_path = ward_processed_dir(project_root, ward_id) / "metadata.json"
+    output_path = ward_processed_dir(
+        project_root, ward_id, output_dir_name=output_dir_name,
+    ) / "metadata.json"
     with output_path.open("w", encoding="utf-8") as fh:
         json.dump(metadata, fh, indent=2)
         fh.write("\n")
@@ -134,7 +160,12 @@ def extract_ward_metadata(ward_id: str, project_root: Path) -> dict[str, Any]:
 # Boundary edge detection
 # ------------------------------------------------------------------
 
-def detect_ward_boundaries(ward_id: str, project_root: Path, strict_mode: bool = True) -> dict[str, Any]:
+def detect_ward_boundaries(
+    ward_id: str,
+    project_root: Path,
+    strict_mode: bool = True,
+    output_dir_name: str | None = None,
+) -> dict[str, Any]:
     """Analyse the SUMO network to identify boundary edges.
 
     Boundary edges are dead-end edges or edges at the network perimeter,
@@ -148,7 +179,9 @@ def detect_ward_boundaries(ward_id: str, project_root: Path, strict_mode: bool =
     Returns:
         Boundary dictionary, also written to ``boundaries.json``.
     """
-    net_path = ward_net_path(project_root, ward_id)
+    net_path = ward_net_path(
+        project_root, ward_id, output_dir_name=output_dir_name,
+    )
     if not net_path.exists():
         raise FileNotFoundError(f"Network not found: {net_path}")
 
@@ -239,7 +272,9 @@ def detect_ward_boundaries(ward_id: str, project_root: Path, strict_mode: bool =
         "internal_edge_count": len(internal_edges),
     }
 
-    output_path = ward_processed_dir(project_root, ward_id) / "boundaries.json"
+    output_path = ward_processed_dir(
+        project_root, ward_id, output_dir_name=output_dir_name,
+    ) / "boundaries.json"
     with output_path.open("w", encoding="utf-8") as fh:
         json.dump(boundaries, fh, indent=2)
         fh.write("\n")
@@ -255,7 +290,13 @@ def detect_ward_boundaries(ward_id: str, project_root: Path, strict_mode: bool =
 # Orchestration
 # ------------------------------------------------------------------
 
-def process_ward(ward_id: str, project_root: Path, strict_mode: bool = True, extra_netconvert_args: list[str] | None = None) -> dict[str, Any]:
+def process_ward(
+    ward_id: str,
+    project_root: Path,
+    strict_mode: bool = True,
+    output_dir_name: str | None = None,
+    extra_netconvert_args: list[str] | None = None,
+) -> dict[str, Any]:
     """Run the full preprocessing pipeline for a single ward.
 
     Steps:
@@ -268,9 +309,21 @@ def process_ward(ward_id: str, project_root: Path, strict_mode: bool = True, ext
     """
     logger.info("Processing ward: %s", ward_id)
 
-    net_path = convert_osm_to_net(ward_id, project_root, extra_netconvert_args=extra_netconvert_args)
-    metadata = extract_ward_metadata(ward_id, project_root)
-    boundaries = detect_ward_boundaries(ward_id, project_root, strict_mode=strict_mode)
+    net_path = convert_osm_to_net(
+        ward_id,
+        project_root,
+        output_dir_name=output_dir_name,
+        extra_netconvert_args=extra_netconvert_args,
+    )
+    metadata = extract_ward_metadata(
+        ward_id, project_root, output_dir_name=output_dir_name,
+    )
+    boundaries = detect_ward_boundaries(
+        ward_id,
+        project_root,
+        strict_mode=strict_mode,
+        output_dir_name=output_dir_name,
+    )
 
     return {
         "ward_id": ward_id,

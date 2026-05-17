@@ -35,11 +35,15 @@ class CityController:
     CONGESTION_ALERT_THRESHOLD = 0.85
     INCIDENT_ALERT_THRESHOLD = 1.0
 
-    def __init__(self, topology: Any) -> None:
+    def __init__(self, topology: Any, area_ids: list[str] | None = None) -> None:
         """Initialise with a ``Topology`` instance for graph construction."""
         self.topology = topology
         self._macro_graph = topology.build_area_graph()
-        self._area_ids = topology.get_all_area_ids()
+        self._area_ids = area_ids or topology.get_all_area_ids()
+
+        if self._area_ids:
+            self._macro_graph = self._macro_graph.subgraph(self._area_ids).copy()
+
         logger.info(
             "CityController initialised: %d areas, %d corridors",
             self._macro_graph.number_of_nodes(),

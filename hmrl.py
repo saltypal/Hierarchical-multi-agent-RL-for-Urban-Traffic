@@ -44,9 +44,21 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--algorithm",
-        default="ppo",
+        default="dqn",
         choices=["ppo", "a2c", "dqn"],
         help="RL algorithm used for ward agents",
+    )
+    parser.add_argument(
+        "--areas",
+        nargs="*",
+        default=None,
+        help="Optional area IDs to deploy together; defaults to the first two areas for city scope",
+    )
+    parser.add_argument(
+        "--preset",
+        choices=["two-area-dqn"],
+        default=None,
+        help="Shortcut deployment preset for the stitched two-area DQN path",
     )
     parser.add_argument(
         "--max-ticks",
@@ -70,6 +82,16 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    scope = args.scope
+    algorithm = args.algorithm
+    area_ids = args.areas
+    identifier = args.id
+    if args.preset == "two-area-dqn":
+        scope = "city"
+        algorithm = "dqn"
+        area_ids = args.areas or None
+        identifier = "two-area-dqn"
+
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
@@ -77,13 +99,14 @@ def main() -> None:
     )
 
     result = run_simulation(
-        scope=args.scope,
-        identifier=args.id,
+        scope=scope,
+        identifier=identifier,
         project_root=PROJECT_ROOT,
         gui=args.gui,
         scenario_id=args.scenario,
         max_ticks=args.max_ticks,
-        algorithm=args.algorithm,
+        algorithm=algorithm,
+        area_ids=area_ids,
     )
 
     print(json.dumps(result, indent=2, default=str))

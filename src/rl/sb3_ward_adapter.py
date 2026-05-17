@@ -12,6 +12,7 @@ exists. GNN data snapshots are collected every 30 steps for free.
 from __future__ import annotations
 
 import json
+import os
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -133,7 +134,7 @@ class StableBaselinesWardEnv(_GymBase):
     def _load_ward_edges(self, ward_id: str) -> list[str]:
         """Load spawn candidate edges from boundaries.json."""
         path = (
-            self._project_root / "maps" / "processed"
+            self._project_root / "maps" / os.getenv("HMRL_MAP_DIR", "processed")
             / ward_id / "boundaries.json"
         )
         if not path.exists():
@@ -182,7 +183,7 @@ class StableBaselinesWardEnv(_GymBase):
         self.reward_calc.reset()
 
         sumocfg = (
-            self._project_root / "maps" / "processed"
+            self._project_root / "maps" / os.getenv("HMRL_MAP_DIR", "processed")
             / self.current_ward_id / "ward.sumocfg"
         )
 
