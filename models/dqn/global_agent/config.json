@@ -20,20 +20,17 @@
   "scenario_ids": [
     "normal",
     "peak_congestion",
-    "traffic_surge",
-    "blocked_road",
+    "breakdown_cascade",
     "ambulance_emergency",
     "vip_convoy",
-    "chaos_mode",
-    "breakdown",
-    "asymmetric_overload",
-    "low_baseline"
+    "chaos_mode"
   ],
   "algorithm": "dqn",
-  "episodes_completed": 400,
-  "obs_dim": 12,
+  "episodes_completed": 100,
+  "obs_dim": 210,
   "action_dim": 10,
   "hidden_dim": 64,
-  "training_time_seconds": 3411.834746360779,
-  "timestamp": "2026-05-17T22:10:07"
+  "temporal_window": 30,
+  "training_time_seconds": 2424.882056951523,
+  "timestamp": "2026-05-20T20:20:34"
 }

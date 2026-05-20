@@ -1,116 +1,65 @@
 """Zone-aware multi-component ward reward calculator.
 
-Computes a 14-component reward signal with zone-type modulation.
-Designed to be called by the RL adapter using state from ``SumoEnv``.
+Computes a PPO-stable, normalized 5-component reward signal.
+Components:
+    1. Efficiency (Throughput & Speed)
+    2. Congestion Penalty
+    3. Improvement Shaping
+    4. Context Modifier (Ambulances & Incidents)
+    5. Hierarchical Penalty
 
-Penalties are weighted 2-3× heavier than rewards to strongly discourage
-congestion, deadlocks, and emergency blocking. Two additional penalty
-components target near-gridlock speed collapse and ambulance travel time.
-
-Does NOT import ``traci`` — receives all state via function arguments.
+Final reward is clipped to [-10, 10] to ensure stable policy gradients.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
-from configs.traffic_profiles import get_zone_profile
-
+import numpy as np
 
 # ------------------------------------------------------------------
 # Default reward weights
 # ------------------------------------------------------------------
 
 DEFAULT_WEIGHTS: dict[str, float] = {
-    # Positive components (moderate)
-    "w_throughput": 2.5,
-    "w_trip_completion": 6.0,
-    "w_avg_speed": 2.5,
-    "w_ambulance_progress": 5.0,
-    "w_congestion_reduction": 2.0,
-    # Negative components (STRONG — 2-3× base penalties)
-    "p_wait_time": 0.05,
-    "p_queue_length": 3.0,
-    "p_spillback": 4.0,
-    "p_deadlock": 20.0,
-    "p_incident_duration": 3.0,
-    "p_ambulance_blocking": 15.0,
-    "p_unfairness": 2.5,
-    # New penalty components
-    "p_speed_collapse": 5.0,
-    "p_ambulance_travel_time": 4.0,
-    # GNN pressure penalty
-    "lambda_pressure": 3.0,
+    "w_throughput": 2.0,
+    "w_speed": 1.5,
+    "p_queue": 2.5,
+    "p_congestion": 2.0,
+    "w_delta_queue": 1.5,
+    "w_delta_congestion": 1.5,
+    "w_ambulance_speed": 3.0,
+    "p_ambulance_blocking": 3.0,
+    "p_incident_queue": 2.0,
+    "w_incident_recovery": 2.0,
+    "p_hierarchy": 1.5,
+    "p_invalid": 1.0,
 }
 
 # ------------------------------------------------------------------
 # Zone-specific modulation overrides
 # ------------------------------------------------------------------
-
 ZONE_MODULATION: dict[str, dict[str, float]] = {
     "commercial": {
-        "w_throughput": 3.5,
-        "w_avg_speed": 3.0,
-        "w_trip_completion": 4.0,
-        "p_queue_length": 4.0,
-    },
-    "residential": {
-        "p_unfairness": 4.0,
-        "p_queue_length": 2.0,
-        "w_throughput": 2.0,
-        "p_speed_collapse": 3.0,
-    },
-    "mixed": {},
-    "arterial": {
-        "w_throughput": 3.5,
-        "w_avg_speed": 3.0,
-        "p_spillback": 5.0,
+        "w_throughput": 2.6,  # Favor throughput
     },
     "hospital_sensitive": {
-        "w_ambulance_progress": 12.0,
-        "p_ambulance_blocking": 25.0,
-        "p_ambulance_travel_time": 8.0,
+        "w_ambulance_speed": 6.0,  # Double ambulance priority
+        "p_ambulance_blocking": 6.0,
     },
     "bottleneck": {
-        "w_throughput": 4.0,
-        "w_congestion_reduction": 4.0,
-        "p_deadlock": 30.0,
+        "p_congestion": 3.0,  # Deadlock sensitivity
     },
-    "it_corridor": {
-        "w_throughput": 4.0,
-        "w_trip_completion": 5.0,
-        "w_avg_speed": 3.5,
-        "p_queue_length": 4.0,
+    "arterial": {
+        "w_throughput": 2.5,
+        "w_speed": 2.0,
+    },
+    "residential": {
+        "p_congestion": 2.5,
     },
 }
 
 
 class WardRewardCalculator:
-    """Computes zone-modulated multi-component rewards for ward RL agents.
-
-    The reward function balances throughput, safety, fairness, and
-    emergency responsiveness. Zone type automatically adjusts weights.
-    Penalties are intentionally 2-3× stronger than rewards to firmly
-    discourage negative traffic outcomes.
-
-    Reward formula::
-
-        R = + w1 * throughput
-            + w2 * trip_completion
-            + w3 * avg_speed
-            + w4 * ambulance_progress
-            + w5 * congestion_reduction
-            - p1 * wait_time
-            - p2 * queue_length
-            - p3 * spillback
-            - p4 * deadlock
-            - p5 * incident_duration
-            - p6 * ambulance_blocking
-            - p7 * unfairness
-            - p8 * speed_collapse
-            - p9 * ambulance_travel_time
-            - λ  * gnn_pressure * outflow
-    """
+    """Computes bounded, smooth rewards for ward RL agents."""
 
     def __init__(
         self,
@@ -121,14 +70,14 @@ class WardRewardCalculator:
         self.weights = DEFAULT_WEIGHTS.copy()
 
         # Apply zone modulation
-        zone_mod = ZONE_MODULATION.get(zone_type, {})
-        self.weights.update(zone_mod)
+        if zone_type in ZONE_MODULATION:
+            self.weights.update(ZONE_MODULATION[zone_type])
 
         # Apply any user overrides
         if custom_weights:
             self.weights.update(custom_weights)
 
-        self._prev_queue: float = 0.0
+        self._prev_queue_norm: float = 0.0
         self._prev_congestion: float = 0.0
 
     def compute(
@@ -138,8 +87,8 @@ class WardRewardCalculator:
         gnn_pressure: float = 0.0,
         invalid_action: bool = False,
     ) -> float:
-        """Compute the reward from ward traffic metrics.
-
+        """Compute the normalized, clipped reward.
+        
         Args:
             ward_state: Ward summary dict from ``SumoEnv.get_ward_summary()``.
             arrived: Number of vehicles that arrived at destination this step.
@@ -147,90 +96,77 @@ class WardRewardCalculator:
             invalid_action: Whether the last action was invalid.
 
         Returns:
-            Scalar reward value.
+            Scalar reward value clipped to [-10, 10].
         """
         w = self.weights
 
-        vehicle_count = ward_state.get("throughput", 0.0)
+        vehicle_count = ward_state.get("throughput", 0.0)  # total vehicles in ward
         queue = ward_state.get("queue", 0.0)
         avg_speed = ward_state.get("avg_speed", 0.0)
         congestion = ward_state.get("congestion", 0.0)
-        ambulance = ward_state.get("ambulance_flag", 0.0)
-        incident = ward_state.get("incident_flag", 0.0)
-        waiting_time = ward_state.get("waiting_time", 0.0)
+        ambulance_flag = ward_state.get("ambulance_flag", 0.0)
+        incident_flag = ward_state.get("incident_flag", 0.0)
+        inflow = ward_state.get("inflow", 0.0)
 
-        # --- Positive components ---
-        throughput_reward = w["w_throughput"] * avg_speed
-        trip_reward = w["w_trip_completion"] * float(arrived)
-        speed_reward = w["w_avg_speed"] * avg_speed
+        # Normalization bases
+        max_speed = 20.0  # ~72 km/h, standard urban cap
+        safe_vehicle_count = max(vehicle_count, 1.0)
 
-        # Ambulance progress: positive if ambulance present and speed is good
-        ambulance_reward = w["w_ambulance_progress"] * ambulance * avg_speed
+        # 1. Efficiency
+        throughput_norm = float(arrived) / safe_vehicle_count
+        speed_norm = min(avg_speed / max_speed, 1.0)
+        r_efficiency = (w["w_throughput"] * throughput_norm) + (w["w_speed"] * speed_norm)
 
-        # Congestion reduction from previous step
-        congestion_delta = self._prev_congestion - congestion
-        congestion_reward = w["w_congestion_reduction"] * max(congestion_delta, 0.0)
+        # 2. Congestion Penalty
+        queue_norm = queue / safe_vehicle_count
+        p_congestion = (w["p_queue"] * queue_norm) + (w["p_congestion"] * congestion)
 
-        # --- Negative components ---
-        wait_penalty = w["p_wait_time"] * congestion * vehicle_count
-        queue_penalty = w["p_queue_length"] * queue
+        # 3. Improvement Shaping
+        delta_q = self._prev_queue_norm - queue_norm
+        delta_c = self._prev_congestion - congestion
+        r_improvement = (w["w_delta_queue"] * delta_q) + (w["w_delta_congestion"] * delta_c)
 
-        # Spillback: queue growing faster than expected
-        queue_delta = queue - self._prev_queue
-        spillback_penalty = w["p_spillback"] * max(queue_delta, 0.0)
+        # 4. Context Modifier
+        r_emergency = 0.0
+        r_incident = 0.0
+        
+        if ambulance_flag > 0:
+            ambulance_speed_norm = min(avg_speed / max_speed, 1.0)
+            r_emergency += w["w_ambulance_speed"] * ambulance_speed_norm
+            r_emergency -= w["p_ambulance_blocking"] * congestion
 
-        # Deadlock: very high queue ratio with near-zero speed
-        deadlock_penalty = 0.0
-        if congestion > 0.8 and avg_speed < 0.5:
-            deadlock_penalty = w["p_deadlock"]
+        if incident_flag > 0:
+            r_incident -= w["p_incident_queue"] * queue_norm
+            r_incident += w["w_incident_recovery"] * delta_c
 
-        incident_penalty = w["p_incident_duration"] * incident
-        ambulance_block_penalty = w["p_ambulance_blocking"] * ambulance * congestion
-
-        # Unfairness: penalize extreme congestion imbalance
-        unfairness_penalty = w["p_unfairness"] * max(congestion - 0.5, 0.0)
-
-        # Speed collapse: near-gridlock conditions (avg_speed < 1.0 m/s)
-        speed_collapse_penalty = 0.0
-        if avg_speed < 1.0 and vehicle_count > 0:
-            speed_collapse_penalty = w["p_speed_collapse"] * (1.0 - avg_speed)
-
-        # Ambulance travel time penalty: ambulance stuck in traffic
-        ambulance_tt_penalty = w["p_ambulance_travel_time"] * ambulance * waiting_time * 0.01
-
-        # GNN pressure penalty
-        pressure_penalty = w["lambda_pressure"] * gnn_pressure * vehicle_count * 0.01
+        # 5. Hierarchical Coordination Penalty
+        inflow_norm = inflow / safe_vehicle_count
+        p_hierarchy = w["p_hierarchy"] * gnn_pressure * inflow_norm
 
         # Invalid action penalty
-        invalid_penalty = 15.0 if invalid_action else 0.0
+        p_invalid = w["p_invalid"] if invalid_action else 0.0
 
-        # --- Combine ---
-        reward = (
-            throughput_reward
-            + trip_reward
-            + speed_reward
-            + ambulance_reward
-            + congestion_reward
-            - wait_penalty
-            - queue_penalty
-            - spillback_penalty
-            - deadlock_penalty
-            - incident_penalty
-            - ambulance_block_penalty
-            - unfairness_penalty
-            - speed_collapse_penalty
-            - ambulance_tt_penalty
-            - pressure_penalty
-            - invalid_penalty
+        # Combine
+        total_reward = (
+            r_efficiency
+            + r_improvement
+            + r_emergency
+            + r_incident
+            - p_congestion
+            - p_hierarchy
+            - p_invalid
         )
 
-        # Update state for next step
-        self._prev_queue = queue
+        # Clip for PPO stability (Crucial for preventing gradient collapse)
+        clipped_reward = float(np.clip(total_reward, -10.0, 10.0))
+
+        # State tracking for next step
+        self._prev_queue_norm = queue_norm
         self._prev_congestion = congestion
 
-        return float(reward)
+        return clipped_reward
 
     def reset(self) -> None:
-        """Reset stateful tracking between episodes."""
-        self._prev_queue = 0.0
+        """Reset state tracking between episodes."""
+        self._prev_queue_norm = 0.0
         self._prev_congestion = 0.0
