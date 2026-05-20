@@ -115,24 +115,43 @@ class AreaForecaster:
         self._prev_congestion = np.zeros(self.n_wards, dtype=np.float32)
         self._prev_queue = np.zeros(self.n_wards, dtype=np.float32)
 
+        # Ingest state tracking for runtime orchestration
+        self._last_summaries: dict[str, dict[str, float]] = {}
+        self._last_city_cap: float = 1.0
+
     # ------------------------------------------------------------------
     # Inference
     # ------------------------------------------------------------------
 
-    def predict(
+    def ingest_tick(
         self,
         ward_summaries: dict[str, dict[str, float]],
+        ward_actions: dict[str, str] | None = None,
         city_cap: float = 1.0,
+    ) -> None:
+        """Ingest tick-level ward summaries and metadata from the simulator."""
+        self._last_summaries = ward_summaries
+        self._last_city_cap = city_cap
+
+    def predict(
+        self,
+        ward_summaries: dict[str, dict[str, float]] | None = None,
+        city_cap: float = 1.0,
+        ingest: bool = False,
     ) -> dict[str, float]:
         """Run GNN prediction on current ward states.
 
         Args:
-            ward_summaries: Dict mapping ward_id → metric summary from SumoEnv.
-            city_cap: City-level inflow capacity cap for this area.
+            ward_summaries: Dict mapping ward_id → metric summary. If None, uses the last ingested summaries.
+            city_cap: City-level inflow capacity cap.
+            ingest: Unused flag kept for orchestration backward compatibility.
 
         Returns:
             Dict mapping ward_id → predicted pressure ∈ [0, 1].
         """
+        if ward_summaries is None:
+            ward_summaries = self._last_summaries
+            city_cap = self._last_city_cap
         x = self._build_features(ward_summaries, city_cap)
         x_tensor = torch.tensor(x, dtype=torch.float32).to(self.device)
 
@@ -206,6 +225,68 @@ class AreaForecaster:
         if not dataset:
             raise ValueError("Empty training dataset")
 
+        logger.info("Pre-processing %d dataset samples to PyTorch tensors...", len(dataset))
+        processed_dataset: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
+        
+        for sample in dataset:
+            if isinstance(sample["features"], list) and len(sample["features"]) > 0 and isinstance(sample["features"][0], dict):
+                # It's a temporal trace from the ward env
+                # We just take the latest feature step
+                trace = sample["features"][-1]
+                trace_start = sample["features"][0]
+                delta_congestion = trace.get("congestion_score", 0.0) - trace_start.get("congestion_score", 0.0)
+                delta_queue = trace.get("queue_length", 0.0) - trace_start.get("queue_length", 0.0)
+                raw_feats = np.array([
+                    trace.get("congestion_score", 0.0),
+                    delta_congestion,
+                    trace.get("queue_length", 0.0),
+                    delta_queue,
+                    trace.get("avg_speed", 0.0),
+                    trace.get("outflow", 0.0), # throughput
+                    trace.get("incident_flag", 0.0),
+                    trace.get("city_directive", 1.0)
+                ], dtype=np.float32)
+            else:
+                raw_feats = np.asarray(sample["features"], dtype=np.float32)
+            
+            raw_target = np.asarray(sample["target"], dtype=np.float32)
+
+            # Dynamically shape and align feature inputs to [N, 8]
+            if raw_feats.ndim == 1:
+                # Single-ward 1D feature array
+                if raw_feats.shape[0] == 7:
+                    # Append default city capacity cap (1.0)
+                    raw_feats = np.append(raw_feats, 1.0)
+                raw_feats = raw_feats.reshape(1, 8)
+            elif raw_feats.ndim == 2:
+                if raw_feats.shape[1] == 7:
+                    # Append a column of 1.0 city caps
+                    caps = np.ones((raw_feats.shape[0], 1), dtype=np.float32)
+                    raw_feats = np.hstack((raw_feats, caps))
+            else:
+                continue
+
+            # Ensure target is shaped appropriately to match predictions
+            n_nodes = raw_feats.shape[0]
+            if raw_target.ndim == 0 or raw_target.size == 1:
+                raw_target = np.full(n_nodes, float(raw_target), dtype=np.float32)
+            elif raw_target.ndim == 1 and raw_target.shape[0] != n_nodes:
+                # Pad or clip if target doesn't match number of nodes
+                raw_target = np.resize(raw_target, n_nodes)
+
+            x = torch.tensor(raw_feats, dtype=torch.float32).to(self.device)
+            y = torch.tensor(raw_target, dtype=torch.float32).to(self.device)
+
+            # Dynamically construct adjacency matrix matching the node count to ensure general learning
+            if n_nodes == self.n_wards:
+                a_hat_used = self.a_hat
+            else:
+                # General case: Use an identity matrix with self-loops
+                a_hat_used = torch.eye(n_nodes, dtype=torch.float32).to(self.device)
+
+            processed_dataset.append((x, y, a_hat_used))
+
+        logger.info("Done pre-processing! Training GNN model...")
         self.model.train()
         optimizer = optim.Adam(self.model.parameters(), lr=lr)
         loss_fn = nn.MSELoss()
@@ -213,18 +294,8 @@ class AreaForecaster:
 
         for epoch in range(epochs):
             epoch_loss = 0.0
-            for sample in dataset:
-                x = torch.tensor(sample["features"], dtype=torch.float32).to(self.device)
-                if x.dim() == 1:
-                    x = x.unsqueeze(0).repeat(self.n_wards, 1)
-                
-                y = torch.tensor(sample["target"], dtype=torch.float32).to(self.device)
-                if y.dim() == 0:
-                    y = y.expand(self.n_wards)
-                elif y.dim() == 1 and y.numel() == 1:
-                    y = y.expand(self.n_wards)
-
-                pred = self.model(x, self.a_hat)
+            for x, y, a_hat_used in processed_dataset:
+                pred = self.model(x, a_hat_used)
                 loss = loss_fn(pred, y)
 
                 optimizer.zero_grad()
@@ -233,7 +304,7 @@ class AreaForecaster:
 
                 epoch_loss += loss.item()
 
-            avg_loss = epoch_loss / len(dataset)
+            avg_loss = epoch_loss / len(processed_dataset)
             losses.append(avg_loss)
 
             if (epoch + 1) % 20 == 0:
@@ -257,14 +328,10 @@ class AreaForecaster:
         logger.info("GNN model saved → %s", model_path)
 
     def _load_model(self, model_dir: Path) -> None:
-        candidate_paths = [
-            model_dir / self.area_id / "area_model.pt",
-            model_dir / "area_model.pt",
-        ]
-        model_path = next((p for p in candidate_paths if p.exists()), None)
-        if model_path is not None:
+        model_path = model_dir / "area_model.pt"
+        if model_path.exists():
             self.model.load_state_dict(
-                torch.load(model_path, map_location=self.device, weights_only=True)
+                torch.load(model_path, weights_only=True)
             )
             self.model.eval()
             logger.info("GNN model loaded ← %s", model_path)

@@ -1,0 +1,43 @@
+{
+  "scope": "area",
+  "identifier": "BTM_Layout",
+  "scenario_id": "chaos_mode",
+  "algorithm": "ppo",
+  "selected_areas": [
+    "BTM_Layout"
+  ],
+  "selected_wards": [
+    "ward_017",
+    "ward_018"
+  ],
+  "total_ticks": 300,
+  "total_arrived": 4,
+  "avg_speed": 1.4666836030359989,
+  "avg_congestion": 0.7374187402635679,
+  "avg_queue": 11.7,
+  "avg_waiting_time": 133.31451612903226,
+  "avg_travel_time": 77.5,
+  "avg_ambulance_travel_time": 0.0,
+  "incident_delay": 33605.298968974756,
+  "ambulance_delay": 0.0,
+  "reroute_count": 20,
+  "elapsed_seconds": 3.6496496200561523,
+  "city_caps_final": {
+    "BTM_Layout": 0.27999999999999997
+  },
+  "gnn_predictions_final": {
+    "ward_017": 0.9999610185623169,
+    "ward_018": 0.9999610185623169
+  },
+  "controller_status": {
+    "use_rl": true,
+    "use_area": true,
+    "use_city": true,
+    "ward_interval": 30,
+    "area_interval": 60,
+    "city_interval": 120,
+    "last_ward_tick": 270,
+    "last_area_tick": 240,
+    "last_city_tick": 240
+  }
+}

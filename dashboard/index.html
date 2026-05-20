@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HMRL — Hierarchical Traffic Control Dashboard</title>
+  <title>HMRL Traffic Intelligence Dashboard</title>
   <style>
     :root {
       --bg: #0a0e1a;
@@ -19,7 +19,7 @@
       --danger: #ef4444;
       --text: #e2e8f0;
       --text-dim: #64748b;
-      --font: 'Inter', 'Segoe UI', system-ui, sans-serif;
+      --font: "Segoe UI", system-ui, sans-serif;
     }
 
     * {
@@ -36,21 +36,20 @@
       min-height: 100vh;
     }
 
-    /* Top Bar */
     .topbar {
       background: var(--surface);
       border-bottom: 1px solid var(--border);
       padding: 12px 24px;
       display: flex;
       align-items: center;
-      gap: 24px;
+      gap: 16px;
+      flex-wrap: wrap;
     }
 
     .topbar h1 {
       font-size: 15px;
       font-weight: 700;
       letter-spacing: 0.5px;
-      color: var(--text);
     }
 
     .topbar h1 span {
@@ -83,6 +82,27 @@
       border: 1px solid rgba(139, 92, 246, 0.3);
     }
 
+    .status-chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .status-chip {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text);
+    }
+
+    .status-chip.off {
+      color: var(--text-dim);
+      opacity: 0.65;
+    }
+
     .ticker {
       margin-left: auto;
       color: var(--text-dim);
@@ -100,9 +120,7 @@
     }
 
     @keyframes pulse {
-
-      0%,
-      100% {
+      0%, 100% {
         opacity: 1;
       }
 
@@ -111,16 +129,13 @@
       }
     }
 
-    /* Layout */
     .grid {
       display: grid;
       grid-template-columns: 1fr 1fr 1fr;
-      grid-template-rows: auto auto;
       gap: 16px;
       padding: 16px;
     }
 
-    /* Card */
     .card {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -131,7 +146,7 @@
     }
 
     .card::before {
-      content: '';
+      content: "";
       position: absolute;
       top: 0;
       left: 0;
@@ -171,10 +186,6 @@
       gap: 8px;
     }
 
-    .card-icon {
-      font-size: 14px;
-    }
-
     .card-span2 {
       grid-column: span 2;
     }
@@ -183,14 +194,14 @@
       grid-column: span 3;
     }
 
-    /* Metrics row */
     .metrics-row {
       display: flex;
       gap: 12px;
+      flex-wrap: wrap;
     }
 
     .metric {
-      flex: 1;
+      flex: 1 1 120px;
       background: var(--surface2);
       border-radius: 8px;
       padding: 12px;
@@ -200,7 +211,6 @@
     .metric-value {
       font-size: 24px;
       font-weight: 800;
-      color: var(--text);
       line-height: 1;
     }
 
@@ -212,30 +222,97 @@
       letter-spacing: 0.5px;
     }
 
-    /* Ward grid */
-    .ward-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    .city-areas,
+    .alert-list {
+      display: flex;
+      flex-direction: column;
       gap: 8px;
     }
 
-    .ward-card {
+    .area-row,
+    .alert-item {
+      background: var(--surface2);
+      border-radius: 8px;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+    }
+
+    .area-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .area-name {
+      width: 100px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .area-bar-wrap {
+      flex: 1;
+    }
+
+    .area-bar {
+      height: 6px;
+      border-radius: 3px;
+      background: var(--border);
+    }
+
+    .area-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.5s ease, background 0.3s;
+    }
+
+    .area-cap {
+      font-size: 11px;
+      font-weight: 700;
+      width: 40px;
+      text-align: right;
+    }
+
+    .gnn-grid,
+    .ward-grid {
+      display: grid;
+      gap: 8px;
+    }
+
+    .gnn-grid {
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    }
+
+    .ward-grid {
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    }
+
+    .gnn-card,
+    .ward-card,
+    .status-card,
+    .trend-card {
       background: var(--surface2);
       border-radius: 8px;
       padding: 10px;
       border: 1px solid var(--border);
-      transition: border-color 0.3s;
     }
 
-    .ward-card:hover {
-      border-color: var(--accent);
-    }
-
+    .gnn-ward,
     .ward-id {
       font-size: 10px;
       font-weight: 700;
       color: var(--text-dim);
       margin-bottom: 4px;
+    }
+
+    .gnn-pressure {
+      font-size: 18px;
+      font-weight: 800;
+    }
+
+    .gnn-label {
+      font-size: 9px;
+      color: var(--text-dim);
+      margin-top: 1px;
     }
 
     .ward-action {
@@ -246,6 +323,14 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    .ward-stat {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-top: 3px;
     }
 
     .progress-bar {
@@ -273,97 +358,73 @@
       background: var(--accent3);
     }
 
-    .ward-stat {
-      display: flex;
-      justify-content: space-between;
-      font-size: 10px;
-      color: var(--text-dim);
-      margin-top: 2px;
-    }
-
-    /* City graph */
-    .city-areas {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .area-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      background: var(--surface2);
-      border-radius: 8px;
-      padding: 8px 12px;
-    }
-
-    .area-name {
-      width: 100px;
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--text);
-    }
-
-    .area-bar-wrap {
-      flex: 1;
-    }
-
-    .area-bar {
-      height: 6px;
-      border-radius: 3px;
-      background: var(--border);
-    }
-
-    .area-fill {
-      height: 100%;
-      border-radius: 3px;
-      transition: width 0.5s ease, background 0.3s;
-    }
-
-    .area-cap {
-      font-size: 11px;
-      font-weight: 700;
-      width: 40px;
-      text-align: right;
-    }
-
-    /* GNN predictions */
-    .gnn-grid {
+    .status-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-      gap: 6px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
     }
 
-    .gnn-card {
-      background: var(--surface2);
-      border-radius: 6px;
-      padding: 8px;
-      border: 1px solid var(--border);
-    }
-
-    .gnn-ward {
+    .status-name {
       font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
       color: var(--text-dim);
+      margin-bottom: 6px;
     }
 
-    .gnn-pressure {
-      font-size: 18px;
+    .status-value {
+      font-size: 16px;
+      font-weight: 800;
+      margin-bottom: 4px;
+    }
+
+    .status-meta {
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.4;
+    }
+
+    .trend-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .trend-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+    }
+
+    .trend-bars {
+      height: 48px;
+      display: flex;
+      align-items: end;
+      gap: 2px;
+    }
+
+    .trend-bar {
+      flex: 1;
+      min-width: 3px;
+      border-radius: 2px 2px 0 0;
+      opacity: 0.9;
+    }
+
+    .trend-value {
+      margin-top: 8px;
+      font-size: 16px;
       font-weight: 800;
     }
 
-    .gnn-label {
-      font-size: 9px;
-      color: var(--text-dim);
-      margin-top: 1px;
-    }
-
-    /* Flow diagram */
     .flow {
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 0;
       padding: 8px 0;
+      flex-wrap: wrap;
     }
 
     .flow-layer {
@@ -417,13 +478,12 @@
       max-width: 70px;
     }
 
-    /* Log */
     .log-area {
-      height: 120px;
+      height: 140px;
       overflow-y: auto;
       font-size: 10px;
       color: var(--text-dim);
-      font-family: monospace;
+      font-family: Consolas, monospace;
       line-height: 1.6;
     }
 
@@ -435,7 +495,7 @@
       color: var(--accent);
     }
 
-    .log-area {
+    .log-area-accent {
       color: var(--accent2);
     }
 
@@ -457,12 +517,12 @@
 </head>
 
 <body>
-
   <div class="topbar">
     <h1>HMRL <span>Traffic Intelligence</span></h1>
-    <span class="badge badge-blue">CITY: Graph Optimizer</span>
-    <span class="badge badge-cyan">AREA: GNN Forecaster</span>
-    <span class="badge badge-purple">WARD: PPO RL</span>
+    <span class="badge badge-blue">CITY: 120s</span>
+    <span class="badge badge-cyan">AREA: 60s</span>
+    <span class="badge badge-purple">WARD: 30s</span>
+    <div class="status-chip-row" id="controller-badges"></div>
     <div class="ticker">
       <span class="dot"></span>
       <span id="tick-label">Tick: 0 | 0.0s elapsed</span>
@@ -470,26 +530,22 @@
   </div>
 
   <div class="grid">
-
-    <!-- City Layer -->
     <div class="card card-city">
-      <div class="card-title"><span class="card-icon"></span> City Layer — Graph Flow Optimizer</div>
+      <div class="card-title">City Layer</div>
       <div class="city-areas" id="city-areas">
         <div class="no-data">Waiting for simulation...</div>
       </div>
     </div>
 
-    <!-- GNN Predictions -->
     <div class="card card-area">
-      <div class="card-title"><span class="card-icon"></span> Area Layer — GNN Pressure Forecast</div>
+      <div class="card-title">Area Layer</div>
       <div class="gnn-grid" id="gnn-grid">
         <div class="no-data">Waiting for GNN...</div>
       </div>
     </div>
 
-    <!-- Global Metrics -->
     <div class="card card-metrics">
-      <div class="card-title"><span class="card-icon"></span> Global Metrics</div>
+      <div class="card-title">Global Metrics</div>
       <div class="metrics-row">
         <div class="metric">
           <div class="metric-value" id="m-vehicles">0</div>
@@ -501,58 +557,81 @@
         </div>
         <div class="metric">
           <div class="metric-value" id="m-speed">0.0</div>
-          <div class="metric-label">Avg Speed m/s</div>
+          <div class="metric-label">Avg Speed</div>
         </div>
         <div class="metric">
           <div class="metric-value" id="m-queue">0</div>
           <div class="metric-label">Queue</div>
         </div>
+        <div class="metric">
+          <div class="metric-value" id="m-congestion">0.0</div>
+          <div class="metric-label">Congestion</div>
+        </div>
       </div>
     </div>
 
-    <!-- Ward Agents -->
+    <div class="card card-flow card-span2">
+      <div class="card-title">Control Clock & Modes</div>
+      <div class="status-grid" id="control-status">
+        <div class="no-data">Waiting for controller state...</div>
+      </div>
+    </div>
+
+    <div class="card card-city">
+      <div class="card-title">Active Alerts</div>
+      <div class="alert-list" id="alert-list">
+        <div class="no-data">No alerts yet</div>
+      </div>
+    </div>
+
     <div class="card card-ward card-span3">
-      <div class="card-title"><span class="card-icon">⚡</span> Ward Layer — PPO RL Tactical Agents</div>
+      <div class="card-title">Ward Layer Tactical State</div>
       <div class="ward-grid" id="ward-grid">
         <div class="no-data">Waiting for ward data...</div>
       </div>
     </div>
 
-    <!-- Architecture Flow -->
+    <div class="card card-metrics card-span3">
+      <div class="card-title">Rolling Live Trends</div>
+      <div class="trend-grid" id="trend-grid">
+        <div class="no-data">Waiting for trend data...</div>
+      </div>
+    </div>
+
     <div class="card card-flow card-span2">
-      <div class="card-title"><span class="card-icon"></span> Bidirectional Control Architecture</div>
+      <div class="card-title">Bidirectional Control Architecture</div>
       <div class="flow">
         <div class="flow-layer" style="border: 1px solid rgba(59,130,246,0.4);">
           <div class="flow-layer-title" style="color:var(--accent)">City</div>
-          <div class="flow-layer-model">NetworkX MCMF</div>
+          <div class="flow-layer-model">Graph Optimizer</div>
           <div class="flow-layer-hz" style="color:var(--accent)">Every 120s</div>
         </div>
         <div class="flow-arrow">
-          <span class="arrow-up">↑</span>
+          <span class="arrow-up">&#8593;</span>
           <span class="arrow-label">Area summaries</span>
-          <span class="arrow-down">↓</span>
+          <span class="arrow-down">&#8595;</span>
           <span class="arrow-label">Capacity caps</span>
         </div>
         <div class="flow-layer" style="border: 1px solid rgba(6,182,212,0.4);">
           <div class="flow-layer-title" style="color:var(--accent2)">Area</div>
           <div class="flow-layer-model">GNN Forecaster</div>
-          <div class="flow-layer-hz" style="color:var(--accent2)">Every 30s</div>
+          <div class="flow-layer-hz" style="color:var(--accent2)">Every 60s</div>
         </div>
         <div class="flow-arrow">
-          <span class="arrow-up">↑</span>
+          <span class="arrow-up">&#8593;</span>
           <span class="arrow-label">Ward summaries</span>
-          <span class="arrow-down">↓</span>
+          <span class="arrow-down">&#8595;</span>
           <span class="arrow-label">Pressure signals</span>
         </div>
         <div class="flow-layer" style="border: 1px solid rgba(139,92,246,0.4);">
           <div class="flow-layer-title" style="color:var(--accent3)">Ward</div>
-          <div class="flow-layer-model">PPO Policy</div>
-          <div class="flow-layer-hz" style="color:var(--accent3)">Every 1s</div>
+          <div class="flow-layer-model">RL Policy</div>
+          <div class="flow-layer-hz" style="color:var(--accent3)">Every 30s</div>
         </div>
         <div class="flow-arrow">
-          <span class="arrow-up">↑</span>
+          <span class="arrow-up">&#8593;</span>
           <span class="arrow-label">Micro state</span>
-          <span class="arrow-down">↓</span>
+          <span class="arrow-down">&#8595;</span>
           <span class="arrow-label">Semantic actions</span>
         </div>
         <div class="flow-layer" style="border: 1px solid rgba(16,185,129,0.4);">
@@ -563,44 +642,93 @@
       </div>
     </div>
 
-    <!-- Event Log -->
     <div class="card card-city">
-      <div class="card-title"><span class="card-icon"></span> Event Log</div>
+      <div class="card-title">Event Log</div>
       <div class="log-area" id="event-log">
         <div class="log-line log-ok">Dashboard initialized. Waiting for simulation...</div>
       </div>
     </div>
-
   </div>
 
   <script>
-    const API = 'http://localhost:5050/api/state';
-    const POLL_INTERVAL = 1000; // ms
-    let logLines = ['Dashboard initialized. Waiting for simulation...'];
+    const API = "http://localhost:5050/api/state";
+    const POLL_INTERVAL = 1000;
+    let logLines = ["Dashboard initialized. Waiting for simulation..."];
+    let lastTicks = { ward: null, area: null, city: null };
 
     function congestionColor(v) {
-      if (v < 0.3) return '#10b981';
-      if (v < 0.6) return '#f59e0b';
-      return '#ef4444';
+      if (v < 0.3) return "#10b981";
+      if (v < 0.6) return "#f59e0b";
+      return "#ef4444";
     }
 
     function capColor(cap) {
-      if (cap > 0.7) return '#10b981';
-      if (cap > 0.4) return '#f59e0b';
-      return '#ef4444';
+      if (cap > 0.7) return "#10b981";
+      if (cap > 0.4) return "#f59e0b";
+      return "#ef4444";
     }
 
-    function addLog(msg, cls = '') {
-      const ts = new Date().toLocaleTimeString('en-IN', { hour12: false });
+    function addLog(msg, cls = "") {
+      const ts = new Date().toLocaleTimeString("en-IN", { hour12: false });
       logLines.unshift(`[${ts}] ${msg}`);
       if (logLines.length > 50) logLines.pop();
-      const el = document.getElementById('event-log');
-      el.innerHTML = logLines.slice(0, 20).map(l => `<div class="log-line ${cls}">${l}</div>`).join('');
+      const el = document.getElementById("event-log");
+      el.innerHTML = logLines.slice(0, 20).map(line => `<div class="log-line ${cls}">${line}</div>`).join("");
+    }
+
+    function renderControllerBadges(status) {
+      const el = document.getElementById("controller-badges");
+      const chips = [
+        ["RL", status.use_rl],
+        ["AREA", status.use_area],
+        ["CITY", status.use_city],
+      ];
+      el.innerHTML = chips.map(([label, enabled]) =>
+        `<span class="status-chip ${enabled ? "" : "off"}">${label}: ${enabled ? "ON" : "OFF"}</span>`
+      ).join("");
+    }
+
+    function renderControlStatus(state) {
+      const status = state.controller_status || {};
+      renderControllerBadges(status);
+      const rows = [
+        ["Ward", status.use_rl, status.ward_interval || 30, status.last_ward_tick],
+        ["Area", status.use_area, status.area_interval || 60, status.last_area_tick],
+        ["City", status.use_city, status.city_interval || 120, status.last_city_tick],
+      ];
+      const el = document.getElementById("control-status");
+      el.innerHTML = rows.map(([name, enabled, interval, lastTick]) => {
+        const nextTick = enabled ? ((lastTick ?? 0) + interval) : null;
+        return `<div class="status-card">
+          <div class="status-name">${name}</div>
+          <div class="status-value" style="color:${enabled ? "#e2e8f0" : "#64748b"}">${enabled ? "Active" : "Disabled"}</div>
+          <div class="status-meta">interval: ${interval}s</div>
+          <div class="status-meta">last tick: ${lastTick ?? "n/a"}</div>
+          <div class="status-meta">next due: ${nextTick ?? "n/a"}</div>
+        </div>`;
+      }).join("");
+
+      if (status.last_ward_tick !== null && status.last_ward_tick !== lastTicks.ward) {
+        addLog(`Ward controller fired at tick ${status.last_ward_tick}`, "log-ward");
+        lastTicks.ward = status.last_ward_tick;
+      }
+      if (status.last_area_tick !== null && status.last_area_tick !== lastTicks.area) {
+        addLog(`Area predictor fired at tick ${status.last_area_tick}`, "log-area-accent");
+        lastTicks.area = status.last_area_tick;
+      }
+      if (status.last_city_tick !== null && status.last_city_tick !== lastTicks.city) {
+        addLog(`City controller fired at tick ${status.last_city_tick}`, "log-city");
+        lastTicks.city = status.last_city_tick;
+      }
     }
 
     function renderCityAreas(state) {
+      if (state.controller_status && state.controller_status.use_city === false) {
+        document.getElementById("city-areas").innerHTML = '<div class="no-data">City controller disabled</div>';
+        return;
+      }
       const caps = state.city_caps || {};
-      const el = document.getElementById('city-areas');
+      const el = document.getElementById("city-areas");
       if (!Object.keys(caps).length) {
         el.innerHTML = '<div class="no-data">No city data yet</div>';
         return;
@@ -609,20 +737,40 @@
         const pct = Math.round(cap * 100);
         const color = capColor(cap);
         return `<div class="area-row">
-        <div class="area-name">${area.replace('_', ' ')}</div>
-        <div class="area-bar-wrap">
-          <div class="area-bar">
-            <div class="area-fill" style="width:${pct}%; background:${color}"></div>
+          <div class="area-name">${area.replaceAll("_", " ")}</div>
+          <div class="area-bar-wrap">
+            <div class="area-bar">
+              <div class="area-fill" style="width:${pct}%; background:${color}"></div>
+            </div>
           </div>
-        </div>
-        <div class="area-cap" style="color:${color}">${pct}%</div>
-      </div>`;
-      }).join('');
+          <div class="area-cap" style="color:${color}">${pct}%</div>
+        </div>`;
+      }).join("");
+    }
+
+    function renderAlerts(state) {
+      const wards = state.ward_states || {};
+      const caps = state.city_caps || {};
+      const alerts = [];
+      Object.entries(wards).forEach(([wid, ws]) => {
+        if ((ws.incident_flag || 0) > 0) alerts.push(`<div class="alert-item"><strong>${wid}</strong> incident flag active</div>`);
+        if ((ws.ambulance_flag || 0) > 0) alerts.push(`<div class="alert-item"><strong>${wid}</strong> ambulance-sensitive traffic active</div>`);
+        if ((ws.congestion || 0) >= 0.6) alerts.push(`<div class="alert-item"><strong>${wid}</strong> high congestion at ${(ws.congestion * 100).toFixed(0)}%</div>`);
+      });
+      Object.entries(caps).forEach(([area, cap]) => {
+        if (cap <= 0.4) alerts.push(`<div class="alert-item"><strong>${area}</strong> low city cap at ${(cap * 100).toFixed(0)}%</div>`);
+      });
+      const el = document.getElementById("alert-list");
+      el.innerHTML = alerts.length ? alerts.join("") : '<div class="no-data">No active alerts</div>';
     }
 
     function renderGNN(state) {
+      if (state.controller_status && state.controller_status.use_area === false) {
+        document.getElementById("gnn-grid").innerHTML = '<div class="no-data">Area predictor disabled</div>';
+        return;
+      }
       const preds = state.area_predictions || {};
-      const el = document.getElementById('gnn-grid');
+      const el = document.getElementById("gnn-grid");
       if (!Object.keys(preds).length) {
         el.innerHTML = '<div class="no-data">GNN not active yet</div>';
         return;
@@ -631,66 +779,100 @@
         const pct = Math.round(pressure * 100);
         const color = congestionColor(pressure);
         return `<div class="gnn-card">
-        <div class="gnn-ward">${ward}</div>
-        <div class="gnn-pressure" style="color:${color}">${pct}%</div>
-        <div class="gnn-label">predicted pressure</div>
-      </div>`;
-      }).join('');
+          <div class="gnn-ward">${ward}</div>
+          <div class="gnn-pressure" style="color:${color}">${pct}%</div>
+          <div class="gnn-label">predicted pressure</div>
+        </div>`;
+      }).join("");
     }
 
     function renderWards(state) {
       const wards = state.ward_states || {};
       const actions = state.ward_actions || {};
-      const rewards = state.ward_rewards || {};
-      const el = document.getElementById('ward-grid');
+      const el = document.getElementById("ward-grid");
       if (!Object.keys(wards).length) {
         el.innerHTML = '<div class="no-data">No ward data yet</div>';
         return;
       }
       el.innerHTML = Object.entries(wards).map(([wid, ws]) => {
-        const action = (actions[wid] || 'no_op').replace(/_/g, ' ');
-        const reward = (rewards[wid] || 0).toFixed(2);
+        const action = (actions[wid] || "NO_OP").replaceAll("_", " ");
         const speed = ws.avg_speed || 0;
         const congestion = ws.congestion || 0;
         const pressure = ws.pressure || 0;
-        const speedPct = Math.min(100, speed / 20 * 100);
+        const inflow = ws.inflow || 0;
+        const outflow = ws.outflow || 0;
+        const speedPct = Math.min(100, (speed / 20) * 100);
         const queuePct = Math.min(100, congestion * 100);
         const pressPct = Math.min(100, pressure * 100);
+        const actionAge = ws.last_action_tick === null || ws.last_action_tick === undefined
+          ? "n/a"
+          : `${(state.tick || 0) - ws.last_action_tick}s`;
         return `<div class="ward-card">
-        <div class="ward-id">${wid}</div>
-        <div class="ward-action">${action}</div>
-        <div class="ward-stat"><span>speed</span><span>${speed.toFixed(1)} m/s</span></div>
-        <div class="progress-bar"><div class="progress-fill progress-speed" style="width:${speedPct}%"></div></div>
-        <div class="ward-stat"><span>queue</span><span>${(congestion * 100).toFixed(0)}%</span></div>
-        <div class="progress-bar"><div class="progress-fill progress-queue" style="width:${queuePct}%"></div></div>
-        <div class="ward-stat"><span>GNN ▲</span><span>${(pressure * 100).toFixed(0)}%</span></div>
-        <div class="progress-bar"><div class="progress-fill progress-pressure" style="width:${pressPct}%"></div></div>
-        <div class="ward-stat" style="margin-top:4px"><span>reward</span><span style="color:${reward > 0 ? '#10b981' : '#ef4444'}">${reward}</span></div>
-      </div>`;
-      }).join('');
+          <div class="ward-id">${wid}</div>
+          <div class="ward-action">${action}</div>
+          <div class="ward-stat"><span>speed</span><span>${speed.toFixed(1)} m/s</span></div>
+          <div class="progress-bar"><div class="progress-fill progress-speed" style="width:${speedPct}%"></div></div>
+          <div class="ward-stat"><span>queue</span><span>${(congestion * 100).toFixed(0)}%</span></div>
+          <div class="progress-bar"><div class="progress-fill progress-queue" style="width:${queuePct}%"></div></div>
+          <div class="ward-stat"><span>pressure</span><span>${(pressure * 100).toFixed(0)}%</span></div>
+          <div class="progress-bar"><div class="progress-fill progress-pressure" style="width:${pressPct}%"></div></div>
+          <div class="ward-stat"><span>in / out</span><span>${inflow.toFixed(0)} / ${outflow.toFixed(0)}</span></div>
+          <div class="ward-stat"><span>incident</span><span>${(ws.incident_flag || 0) > 0 ? "yes" : "no"}</span></div>
+          <div class="ward-stat"><span>ambulance</span><span>${(ws.ambulance_flag || 0) > 0 ? "yes" : "no"}</span></div>
+          <div class="ward-stat"><span>action age</span><span>${actionAge}</span></div>
+        </div>`;
+      }).join("");
+    }
+
+    function renderTrends(state) {
+      const trendData = state.trend_metrics || {};
+      const specs = [
+        ["avg_speed", "Avg Speed", "#10b981"],
+        ["congestion_score", "Congestion", "#ef4444"],
+        ["queue_length", "Queue", "#f59e0b"],
+        ["throughput", "Throughput", "#3b82f6"],
+      ];
+      const el = document.getElementById("trend-grid");
+      el.innerHTML = specs.map(([key, label, color]) => {
+        const values = trendData[key] || [];
+        const maxValue = Math.max(...values, 1);
+        const bars = values.map(value =>
+          `<div class="trend-bar" style="height:${Math.max(4, (value / maxValue) * 100)}%; background:${color}"></div>`
+        ).join("");
+        const latest = values.length ? values[values.length - 1] : 0;
+        return `<div class="trend-card">
+          <div class="trend-title">${label}</div>
+          <div class="trend-bars">${bars || '<div class="no-data">No data</div>'}</div>
+          <div class="trend-value">${Number(latest).toFixed(2)}</div>
+        </div>`;
+      }).join("");
     }
 
     function renderMetrics(state) {
-      const m = state.metrics || {};
-      document.getElementById('m-vehicles').textContent = m.total_vehicles || 0;
-      document.getElementById('m-arrived').textContent = state.total_arrived || 0;
-      document.getElementById('m-speed').textContent = (m.avg_speed || 0).toFixed(1);
-      document.getElementById('m-queue').textContent = m.total_queue || 0;
-      document.getElementById('tick-label').textContent =
-        `Tick: ${state.tick || 0} | ${(state.elapsed || 0).toFixed(1)}s elapsed | ${state.scenario || ''} | ${state.scope}:${state.identifier}`;
+      const metrics = state.metrics || {};
+      document.getElementById("m-vehicles").textContent = metrics.total_vehicles || 0;
+      document.getElementById("m-arrived").textContent = state.total_arrived || 0;
+      document.getElementById("m-speed").textContent = (metrics.avg_speed || 0).toFixed(1);
+      document.getElementById("m-queue").textContent = metrics.total_queue || 0;
+      document.getElementById("m-congestion").textContent = (metrics.congestion_score || 0).toFixed(2);
+      document.getElementById("tick-label").textContent =
+        `Tick: ${state.tick || 0} | ${(state.elapsed || 0).toFixed(1)}s elapsed | ${state.scenario || ""} | ${state.scope}:${state.identifier}`;
     }
 
     async function poll() {
       try {
         const res = await fetch(API);
-        if (!res.ok) throw new Error('not ok');
+        if (!res.ok) throw new Error("not ok");
         const state = await res.json();
+        renderControlStatus(state);
         renderCityAreas(state);
+        renderAlerts(state);
         renderGNN(state);
         renderWards(state);
+        renderTrends(state);
         renderMetrics(state);
       } catch (e) {
-        document.getElementById('tick-label').textContent = '⚠ Dashboard server offline — run: python dashboard/server.py';
+        document.getElementById("tick-label").textContent = "Dashboard server offline - run: python dashboard/server.py";
       }
     }
 

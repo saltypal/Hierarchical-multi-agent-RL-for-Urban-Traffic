@@ -44,10 +44,10 @@ ALGORITHM_MAP = {
 # ------------------------------------------------------------------
 
 class GNNDataCollector(BaseCallback):
-    """SB3 callback that logs ward state snapshots for GNN training.
+    """SB3 callback that logs ward temporal traces for area training.
 
     Every ``collection_interval`` steps, captures the ward summary
-    from the environment and stores it for later GNN offline training.
+    from the environment and stores it for later temporal area training.
     """
 
     def __init__(
@@ -67,8 +67,15 @@ class GNNDataCollector(BaseCallback):
             env = self.training_env.envs[0]
             if hasattr(env, "unwrapped"):
                 env = env.unwrapped
-                
-            if hasattr(env, "get_gnn_snapshot"):
+
+            if hasattr(env, "get_temporal_trace"):
+                trace = env.get_temporal_trace()
+                if trace:
+                    self.data_buffer.append({
+                        "step": self._step_count,
+                        "trace": trace[-30:],
+                    })
+            elif hasattr(env, "get_gnn_snapshot"):
                 snapshot = env.get_gnn_snapshot()
                 if snapshot is not None:
                     self.data_buffer.append(snapshot)
@@ -76,25 +83,51 @@ class GNNDataCollector(BaseCallback):
         return True
 
     def get_dataset(self) -> list[dict[str, Any]]:
-        """Return collected GNN training samples with retroactive labels."""
+        """Return collected training samples with retroactive labels."""
         labeled: list[dict[str, Any]] = []
 
         for i in range(len(self.data_buffer) - 1):
             current = self.data_buffer[i]
             future = self.data_buffer[i + 1]
-            
-            # Extract and copy the raw feature array
-            feats = current["features"].copy()
-            
-            # Retroactively calculate real delta features
-            # index 1: delta_congestion = future_congestion - current_congestion
-            feats[1] = future["congestion"] - current["congestion"]
-            # index 3: delta_queue = future_queue - current_queue (index 2 is absolute queue)
-            feats[3] = future["features"][2] - current["features"][2]
-            
+
+            if "trace" in current and current["trace"]:
+                labeled.append({
+                    "features": current["trace"],
+                    "target": future.get("trace", [{}])[-1].get("congestion_score", 0.0) if future.get("trace") else 0.0,
+                })
+                continue
+
+            # Fallback path: build correct 8-dimensional feature matrix
+            # current["features"] is a 7-element array from build_ward_feature_frame:
+            # [congestion, queue, avg_speed, inflow, outflow, incident_flag, ambulance_flag]
+            curr_feats = current["features"]
+            congestion = current.get("congestion", 0.0)
+            queue = float(curr_feats[1])
+            avg_speed = float(curr_feats[2])
+            outflow = float(curr_feats[4])  # outflow represents throughput/outflow in GNN
+            incident_flag = float(curr_feats[5])
+
+            feats = np.zeros(8, dtype=np.float32)
+            feats[0] = congestion
+            feats[2] = queue
+            feats[4] = avg_speed
+            feats[5] = outflow
+            feats[6] = incident_flag
+            feats[7] = current.get("city_cap", 1.0)
+
+            # Compute deltas using current and past state to avoid lookahead target leakage
+            if i > 0:
+                past = self.data_buffer[i - 1]
+                past_feats = past["features"]
+                feats[1] = congestion - past.get("congestion", 0.0)
+                feats[3] = queue - float(past_feats[1])
+            else:
+                feats[1] = 0.0
+                feats[3] = 0.0
+
             labeled.append({
                 "features": feats,
-                "target": future["congestion"],
+                "target": future.get("congestion", 0.0),
             })
 
         return labeled
@@ -171,7 +204,7 @@ def train_global_agent(
         algorithm: One of ``"ppo"``, ``"a2c"``, ``"dqn"``.
         episodes: Total training episodes.
         gui: Whether to show SUMO GUI during training.
-        collect_gnn_data: If True, collect ward snapshots for GNN.
+        collect_gnn_data: If True, collect ward temporal traces for the area model.
         results_dir: Where to save training results (defaults to ``results/training/``).
 
     Returns:
@@ -201,6 +234,8 @@ def train_global_agent(
         "gui": gui,
         "scenario_id": scenario_ids,
         "training_mode": True,
+        "decision_interval_steps": 30,
+        "max_simulation_steps": 1200,
     }
     env = StableBaselinesWardEnv(env_config)
 
@@ -212,7 +247,7 @@ def train_global_agent(
     
     gnn_collector = None
     if collect_gnn_data:
-        gnn_collector = GNNDataCollector(collection_interval=30)
+        gnn_collector = GNNDataCollector(collection_interval=1)
         callbacks.append(gnn_collector)
 
     # Create and train model
@@ -247,6 +282,7 @@ def train_global_agent(
         "obs_dim": int(env.observation_space.shape[0]),
         "action_dim": int(env.action_space.n),
         "hidden_dim": 64,
+        "temporal_window": 30,
         "training_time_seconds": elapsed,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
@@ -254,17 +290,21 @@ def train_global_agent(
     with config_path.open("w", encoding="utf-8") as fh:
         json.dump(config, fh, indent=2)
 
-    # Save GNN training data
+    # Save temporal ward training data
     gnn_data_path = None
     if gnn_collector is not None:
         gnn_dataset = gnn_collector.get_dataset()
         if gnn_dataset and torch is not None:
-            gnn_data_path = project_root / "models" / "gnn" / "global_gnn_data.pt"
-            gnn_data_path.parent.mkdir(parents=True, exist_ok=True)
-            torch.save(gnn_dataset, gnn_data_path)
+            temporal_data_path = project_root / "models" / "gnn" / "global_temporal_data.pt"
+            temporal_data_path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(gnn_dataset, temporal_data_path)
+            gnn_data_path = temporal_data_path
             logger.info(
-                "GNN data saved: %d samples → %s", len(gnn_dataset), gnn_data_path,
+                "Temporal ward data saved: %d samples → %s", len(gnn_dataset), temporal_data_path,
             )
+
+            legacy_path = project_root / "models" / "gnn" / "global_gnn_data.pt"
+            torch.save(gnn_dataset, legacy_path)
 
     env.close()
 

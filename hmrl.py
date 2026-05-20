@@ -67,6 +67,21 @@ def parse_args() -> argparse.Namespace:
         help="Maximum simulation duration in seconds",
     )
     parser.add_argument(
+        "--disable-rl",
+        action="store_true",
+        help="Disable ward RL control",
+    )
+    parser.add_argument(
+        "--disable-area",
+        action="store_true",
+        help="Disable area prediction/control",
+    )
+    parser.add_argument(
+        "--disable-city",
+        action="store_true",
+        help="Disable city control",
+    )
+    parser.add_argument(
         "--gui",
         action="store_true",
         help="Run SUMO in GUI mode",
@@ -107,6 +122,9 @@ def main() -> None:
         max_ticks=args.max_ticks,
         algorithm=algorithm,
         area_ids=area_ids,
+        use_rl=not args.disable_rl,
+        use_area=not args.disable_area,
+        use_city=not args.disable_city,
     )
 
     print(json.dumps(result, indent=2, default=str))

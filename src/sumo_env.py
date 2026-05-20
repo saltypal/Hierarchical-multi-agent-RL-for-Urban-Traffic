@@ -7,6 +7,7 @@ route through ``SumoEnv``.
 
 from __future__ import annotations
 
+import socket
 import logging
 from pathlib import Path
 from typing import Any
@@ -47,9 +48,30 @@ class SumoEnv:
             if gui_cfg.exists():
                 cmd.extend(["--gui-settings-file", str(gui_cfg)])
                 
-        traci.start(cmd)
+        # Find a free local TCP port dynamically to prevent port collisions
+        free_port = 8813
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('', 0))
+                free_port = s.getsockname()[1]
+        except Exception:
+            pass
+
+        try:
+            traci.start(cmd, port=free_port)
+        except Exception as e:
+            if "already active" in str(e) or "default" in str(e):
+                logger.warning("TraCI connection default already active. Forcing close and retrying...")
+                try:
+                    traci.close()
+                except Exception:
+                    pass
+                traci.start(cmd, port=free_port)
+            else:
+                raise e
+
         self._started = True
-        logger.info("SUMO started: %s (gui=%s)", config_path, gui)
+        logger.info("SUMO started on port %d: %s (gui=%s)", free_port, config_path, gui)
 
         if gui:
             try:
@@ -243,6 +265,9 @@ class SumoEnv:
                 "throughput": 0.0,
                 "inflow": 0.0,
                 "outflow": 0.0,
+                "waiting_time": 0.0,
+                "max_waiting_time": 0.0,
+                "vehicle_count": 0.0,
                 "incident_flag": 0.0,
                 "ambulance_flag": 0.0,
             }
@@ -263,6 +288,9 @@ class SumoEnv:
             "throughput": float(vehicle_count),
             "inflow": float(self.get_departed_count()),
             "outflow": float(self.get_arrived_count()),
+            "waiting_time": float(sum(waits) / vehicle_count),
+            "max_waiting_time": float(max(waits)),
+            "vehicle_count": float(vehicle_count),
             "incident_flag": 1.0 if max(waits) > 120.0 else 0.0,
             "ambulance_flag": float(min(ambulance_count, 1)),
         }

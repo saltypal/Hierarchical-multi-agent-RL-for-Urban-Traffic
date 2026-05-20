@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,12 @@ import numpy as np
 
 from src.controllers.area_controller import AreaForecaster
 from src.controllers.city_controller import CityController
+from src.controllers.temporal_features import (
+    WARD_FEATURE_DIM,
+    WARD_TEMPORAL_WINDOW,
+    build_ward_feature_frame,
+    pad_history,
+)
 from src.controllers.ward_agent import WardAgent
 from src.rl.ward_actions import WardAction
 from src.sumo_env import SumoEnv
@@ -37,8 +44,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-WARD_INTERVAL = 5
-AREA_INTERVAL = 30
+WARD_INTERVAL = 30
+AREA_INTERVAL = 60
 CITY_INTERVAL = 120
 
 
@@ -281,6 +288,37 @@ def _generate_deployment_assets(
             ingress_edges.extend(_normalize_edge_list(bounds.get("valid_ingress_edges", [])))
             egress_edges.extend(_normalize_edge_list(bounds.get("valid_egress_edges", [])))
 
+    # Parse stitched net file to find all valid edges actually present in the network
+    valid_edge_ids = set()
+    if stitched_net.exists():
+        try:
+            with stitched_net.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    if "<edge id=" in line:
+                        start = line.find('id="') + 4
+                        end = line.find('"', start)
+                        if start > 3 and end > start:
+                            eid = line[start:end]
+                            if not eid.startswith(":"):
+                                valid_edge_ids.add(eid)
+        except Exception as e:
+            logger.warning("Could not parse stitched net for valid edges: %s", e)
+
+    # Filter ingress, egress, and internal edges to only keep those present in valid_edge_ids
+    if valid_edge_ids:
+        ingress_edges = [
+            e for e in ingress_edges 
+            if (e["edge_id"] if isinstance(e, dict) else e) in valid_edge_ids
+        ]
+        egress_edges = [
+            e for e in egress_edges 
+            if (e["edge_id"] if isinstance(e, dict) else e) in valid_edge_ids
+        ]
+        internal_edges = [
+            e for e in internal_edges 
+            if (e["edge_id"] if isinstance(e, dict) else e) in valid_edge_ids
+        ]
+
     total_count = int(
         100 * len(selected_ward_ids) * traffic_gen.scenario["spawn_multiplier"] * 1.15
     )
@@ -337,6 +375,11 @@ def run_simulation(
     dashboard: bool = True,
     gui_delay_ms: float = 150.0,
     area_ids: list[str] | None = None,
+    use_rl: bool = True,
+    use_area: bool = True,
+    use_city: bool = True,
+    collect_tick_records: bool = False,
+    persist_results: bool = True,
 ) -> dict[str, Any]:
     """Execute a hierarchical simulation with ward, area, and city layers."""
     logger.info(
@@ -350,12 +393,6 @@ def run_simulation(
 
     topology = Topology(project_root)
     algorithm = algorithm.lower()
-    if algorithm != "dqn":
-        logger.warning(
-            "Deployment stack is DQN-only for now; overriding algorithm=%s to dqn",
-            algorithm,
-        )
-        algorithm = "dqn"
 
     if scope == "ward":
         selected_area_ids = [topology.get_ward_area(identifier)]
@@ -400,19 +437,21 @@ def run_simulation(
         )
 
     ward_agents: dict[str, WardAgent] = {}
-    for wid in selected_ward_ids:
-        model_path = _resolve_ward_model_path(project_root, algorithm, wid)
-        ward_agents[wid] = WardAgent(wid, model_path)
+    if use_rl:
+        for wid in selected_ward_ids:
+            model_path = _resolve_ward_model_path(project_root, algorithm, wid)
+            ward_agents[wid] = WardAgent(wid, model_path)
 
     area_forecasters: dict[str, AreaForecaster] = {}
-    for aid in selected_area_ids:
-        area_forecasters[aid] = AreaForecaster(
-            aid,
-            topology,
-            project_root / "models" / "gnn",
-        )
+    if use_area:
+        for aid in selected_area_ids:
+            area_forecasters[aid] = AreaForecaster(
+                aid,
+                topology,
+                project_root / "models" / "gnn",
+            )
 
-    city_controller = CityController(topology, selected_area_ids)
+    city_controller = CityController(topology, selected_area_ids) if use_city else None
 
     ward_edges = {
         wid: _normalize_edge_list(
@@ -426,7 +465,14 @@ def run_simulation(
         wid: 1.0 for wid in selected_ward_ids
     }
     last_ward_obs: dict[str, np.ndarray] = {
-        wid: np.zeros(12, dtype=np.float32) for wid in selected_ward_ids
+        wid: np.zeros(WARD_TEMPORAL_WINDOW * WARD_FEATURE_DIM, dtype=np.float32)
+        for wid in selected_ward_ids
+    }
+    ward_histories: dict[str, deque[np.ndarray]] = {
+        wid: deque(maxlen=WARD_TEMPORAL_WINDOW) for wid in selected_ward_ids
+    }
+    last_ward_action_names: dict[str, str] = {
+        wid: WardAction.NO_OP.name for wid in selected_ward_ids
     }
     last_ward_state: dict[str, dict[str, float]] = {
         wid: {} for wid in selected_ward_ids
@@ -434,19 +480,49 @@ def run_simulation(
     last_actions: dict[str, int] = {
         wid: WardAction.NO_OP.value for wid in selected_ward_ids
     }
+    last_action_tick: dict[str, int | None] = {wid: None for wid in selected_ward_ids}
+    reroute_count = 0
 
     total_arrived = 0
     speed_samples: list[float] = []
+    queue_samples: list[float] = []
+    congestion_samples: list[float] = []
+    throughput_samples: list[float] = []
+    trend_metrics: dict[str, list[float]] = {
+        "avg_speed": [],
+        "congestion_score": [],
+        "queue_length": [],
+        "throughput": [],
+    }
     city_caps: dict[str, float] = {aid: 1.0 for aid in selected_area_ids}
     area_predictions: dict[str, float] = {
         wid: 0.0 for wid in selected_ward_ids
     }
+    tick_records: list[dict[str, Any]] = []
+    ward_tick_records: list[dict[str, Any]] = []
+    active_vehicle_start: dict[str, int] = {}
+    active_vehicle_type: dict[str, str] = {}
+    completed_travel_times: list[float] = []
+    completed_ambulance_times: list[float] = []
+    incident_delay_accumulator = 0.0
+    ambulance_delay_accumulator = 0.0
+    last_area_tick: int | None = None
+    last_city_tick: int | None = None
+    last_ward_tick: int | None = None
 
     sumo_env.start(str(sumocfg), gui=gui, delay_ms=gui_delay_ms)
     logger.info(
         "Simulation started with %d wards across %d areas",
         len(selected_ward_ids), len(selected_area_ids),
     )
+
+    for wid in selected_ward_ids:
+        edges = [e["edge_id"] for e in ward_edges[wid]]
+        summary = sumo_env.get_ward_summary(edges)
+        frame = build_ward_feature_frame(summary)
+        for _ in range(WARD_TEMPORAL_WINDOW):
+            ward_histories[wid].append(frame.copy())
+        last_ward_state[wid] = summary
 
     start_time = time.time()
     tick = 0
@@ -455,53 +531,93 @@ def run_simulation(
         for tick in range(max_ticks):
             traffic_gen.step(sumo_env, tick)
             sumo_env.step()
+            current_vehicle_ids = set(sumo_env.get_vehicle_ids())
+            previous_vehicle_ids = set(active_vehicle_start)
+
+            for veh_id in current_vehicle_ids - previous_vehicle_ids:
+                active_vehicle_start[veh_id] = tick
+                active_vehicle_type[veh_id] = sumo_env.get_vehicle_type(veh_id).lower()
+
+            for veh_id in previous_vehicle_ids - current_vehicle_ids:
+                start_tick = active_vehicle_start.pop(veh_id, tick)
+                travel_time = float(max(0, tick - start_tick))
+                completed_travel_times.append(travel_time)
+                veh_type = active_vehicle_type.pop(veh_id, "")
+                if "ambulance" in veh_type:
+                    completed_ambulance_times.append(travel_time)
+
+            for wid in selected_ward_ids:
+                edges = [e["edge_id"] for e in ward_edges[wid]]
+                summary = sumo_env.get_ward_summary(edges)
+                last_ward_state[wid] = summary
+                ward_histories[wid].append(build_ward_feature_frame(summary))
 
             if sumo_env.get_min_expected_number() <= 0 and tick > 10:
                 logger.info("No more vehicles expected, ending at tick %d", tick)
                 break
 
             if tick % WARD_INTERVAL == 0:
+                last_ward_tick = tick
                 for wid in selected_ward_ids:
-                    edges = [e["edge_id"] for e in ward_edges[wid]]
-                    summary = sumo_env.get_ward_summary(edges)
-                    last_ward_state[wid] = summary
-                    observation = _build_ward_observation(
-                        sumo_env,
-                        edges,
-                        ward_pressure.get(wid, 0.0),
-                        ward_city_cap.get(wid, 1.0),
-                    )
+                    observation = pad_history(
+                        ward_histories[wid],
+                        WARD_TEMPORAL_WINDOW,
+                        WARD_FEATURE_DIM,
+                    ).reshape(-1)
                     last_ward_obs[wid] = observation
-                    action = ward_agents[wid].get_action(observation)
+                    action = WardAction.NO_OP.value
+                    if use_rl:
+                        action = ward_agents[wid].get_action(observation)
                     last_actions[wid] = action
-                    _apply_ward_action(
-                        sumo_env,
-                        action,
-                        edges,
-                        ward_hold_state[wid],
-                    )
+                    last_ward_action_names[wid] = WardAction(action).name
+                    last_action_tick[wid] = tick
+                    if use_rl:
+                        edges = [e["edge_id"] for e in ward_edges[wid]]
+                        _apply_ward_action(
+                            sumo_env,
+                            action,
+                            edges,
+                            ward_hold_state[wid],
+                        )
+                        if WardAction(action) != WardAction.NO_OP:
+                            reroute_count += 1
                     speed_samples.append(summary.get("avg_speed", 0.0))
+                    queue_samples.append(summary.get("queue", 0.0))
+                    congestion_samples.append(summary.get("congestion", 0.0))
 
-            if tick % AREA_INTERVAL == 0 and tick > 0:
+            if use_area:
                 for aid in selected_area_ids:
                     area_ward_ids = topology.get_area_wards(aid)
                     area_summary = {
-                        wid: last_ward_state.get(wid) or sumo_env.get_ward_summary(
-                            [e["edge_id"] for e in ward_edges.get(wid, [])]
-                        )
+                        wid: last_ward_state.get(wid, {})
                         for wid in area_ward_ids
                         if wid in selected_ward_ids
                     }
-
-                    predictions = area_forecasters[aid].predict(
+                    area_actions = {
+                        wid: last_ward_action_names.get(wid, WardAction.NO_OP.name)
+                        for wid in area_ward_ids
+                        if wid in selected_ward_ids
+                    }
+                    area_forecasters[aid].ingest_tick(
                         area_summary,
-                        city_caps.get(aid, 1.0),
+                        ward_actions=area_actions,
+                        city_cap=city_caps.get(aid, 1.0),
                     )
-                    for wid, pressure in predictions.items():
-                        ward_pressure[wid] = pressure
-                        area_predictions[wid] = pressure
 
-            if tick % CITY_INTERVAL == 0 and tick > 0:
+                if tick % AREA_INTERVAL == 0 and tick > 0:
+                    last_area_tick = tick
+                    for aid in selected_area_ids:
+                        predictions = area_forecasters[aid].predict(
+                            None,
+                            city_cap=city_caps.get(aid, 1.0),
+                            ingest=False,
+                        )
+                        for wid, pressure in predictions.items():
+                            ward_pressure[wid] = pressure
+                            area_predictions[wid] = pressure
+
+            if use_city and city_controller is not None and tick % CITY_INTERVAL == 0 and tick > 0:
+                last_city_tick = tick
                 area_summaries: dict[str, dict[str, float]] = {}
                 for aid in selected_area_ids:
                     area_ward_ids = topology.get_area_wards(aid)
@@ -529,15 +645,101 @@ def run_simulation(
                     area_id = ward_to_area[wid]
                     ward_city_cap[wid] = city_caps.get(area_id, 1.0)
 
+            ward_state_values = list(last_ward_state.values())
+            avg_speed = float(np.mean([
+                state.get("avg_speed", 0.0) for state in ward_state_values
+            ])) if ward_state_values else 0.0
+            avg_congestion = float(np.mean([
+                state.get("congestion", 0.0) for state in ward_state_values
+            ])) if ward_state_values else 0.0
+            total_queue = float(sum(
+                state.get("queue", 0.0) for state in ward_state_values
+            ))
+            avg_waiting_time = float(np.mean([
+                state.get("waiting_time", 0.0) for state in ward_state_values
+            ])) if ward_state_values else 0.0
+            active_incident_delay = float(sum(
+                state.get("waiting_time", 0.0)
+                for state in ward_state_values
+                if state.get("incident_flag", 0.0) > 0.0
+            ))
+            active_ambulance_delay = float(sum(
+                state.get("waiting_time", 0.0)
+                for state in ward_state_values
+                if state.get("ambulance_flag", 0.0) > 0.0
+            ))
+            incident_delay_accumulator += active_incident_delay
+            ambulance_delay_accumulator += active_ambulance_delay
+            throughput_samples.append(float(total_arrived))
+
+            for key, value in (
+                ("avg_speed", avg_speed),
+                ("congestion_score", avg_congestion),
+                ("queue_length", total_queue),
+                ("throughput", float(total_arrived)),
+            ):
+                trend_metrics[key].append(value)
+                if len(trend_metrics[key]) > 60:
+                    trend_metrics[key].pop(0)
+
+            if collect_tick_records:
+                tick_records.append({
+                    "time": tick,
+                    "avg_speed": avg_speed,
+                    "congestion_score": avg_congestion,
+                    "queue_length": total_queue,
+                    "throughput": float(total_arrived),
+                    "trip_completion": float(total_arrived),
+                    "travel_time": float(np.mean(completed_travel_times)) if completed_travel_times else 0.0,
+                    "waiting_time": avg_waiting_time,
+                    "ambulance_delay": active_ambulance_delay,
+                    "incident_delay": active_incident_delay,
+                    "reroute_count": reroute_count,
+                })
+                for wid, state in last_ward_state.items():
+                    action_name = last_ward_action_names.get(wid, WardAction.NO_OP.name)
+                    ward_tick_records.append({
+                        "time": tick,
+                        "ward_id": wid,
+                        "scenario_id": scenario_id,
+                        "avg_speed": float(state.get("avg_speed", 0.0)),
+                        "congestion_score": float(state.get("congestion", 0.0)),
+                        "queue_length": float(state.get("queue", 0.0)),
+                        "throughput": float(state.get("throughput", 0.0)),
+                        "inflow": float(state.get("inflow", 0.0)),
+                        "outflow": float(state.get("outflow", 0.0)),
+                        "waiting_time": float(state.get("waiting_time", 0.0)),
+                        "incident_flag": float(state.get("incident_flag", 0.0)),
+                        "ambulance_flag": float(state.get("ambulance_flag", 0.0)),
+                        "pressure": float(ward_pressure.get(wid, 0.0)),
+                        "city_cap": float(ward_city_cap.get(wid, 1.0)),
+                        "ppo_action": action_name,
+                        "ppo_action_id": int(WardAction[action_name]),
+                        "area_directive": float(ward_pressure.get(wid, 0.0)),
+                        "city_directive": float(ward_city_cap.get(ward_to_area[wid], 1.0)),
+                    })
+
             _dash_update({
                 "tick": tick,
                 "elapsed": time.time() - start_time,
                 "total_arrived": total_arrived,
+                "controller_status": {
+                    "use_rl": use_rl,
+                    "use_area": use_area,
+                    "use_city": use_city,
+                    "ward_interval": WARD_INTERVAL,
+                    "area_interval": AREA_INTERVAL,
+                    "city_interval": CITY_INTERVAL,
+                    "last_ward_tick": last_ward_tick,
+                    "last_area_tick": last_area_tick,
+                    "last_city_tick": last_city_tick,
+                },
                 "ward_states": {
                     wid: {
                         **last_ward_state.get(wid, {}),
                         "pressure": ward_pressure.get(wid, 0.0),
                         "city_cap": ward_city_cap.get(wid, 1.0),
+                        "last_action_tick": last_action_tick.get(wid),
                     }
                     for wid in selected_ward_ids
                 },
@@ -547,13 +749,13 @@ def run_simulation(
                 },
                 "area_predictions": area_predictions,
                 "city_caps": city_caps,
+                "trend_metrics": trend_metrics,
                 "metrics": {
-                    "avg_speed": float(np.mean(speed_samples[-30:])) if speed_samples else 0.0,
-                    "total_vehicles": len(sumo_env.get_vehicle_ids()),
-                    "total_queue": int(sum(
-                        state.get("queue", 0.0) for state in last_ward_state.values()
-                    )),
+                    "avg_speed": avg_speed,
+                    "total_vehicles": len(current_vehicle_ids),
+                    "total_queue": int(total_queue),
                     "throughput": total_arrived,
+                    "congestion_score": avg_congestion,
                 },
             })
 
@@ -576,16 +778,42 @@ def run_simulation(
         "total_ticks": tick + 1,
         "total_arrived": total_arrived,
         "avg_speed": float(np.mean(speed_samples)) if speed_samples else 0.0,
+        "avg_congestion": float(np.mean(congestion_samples)) if congestion_samples else 0.0,
+        "avg_queue": float(np.mean(queue_samples)) if queue_samples else 0.0,
+        "avg_waiting_time": float(np.mean([
+            state.get("waiting_time", 0.0) for state in last_ward_state.values()
+        ])) if last_ward_state else 0.0,
+        "avg_travel_time": float(np.mean(completed_travel_times)) if completed_travel_times else 0.0,
+        "avg_ambulance_travel_time": float(np.mean(completed_ambulance_times)) if completed_ambulance_times else 0.0,
+        "incident_delay": incident_delay_accumulator,
+        "ambulance_delay": ambulance_delay_accumulator,
+        "reroute_count": reroute_count,
         "elapsed_seconds": elapsed,
         "city_caps_final": city_caps,
         "gnn_predictions_final": area_predictions,
+        "controller_status": {
+            "use_rl": use_rl,
+            "use_area": use_area,
+            "use_city": use_city,
+            "ward_interval": WARD_INTERVAL,
+            "area_interval": AREA_INTERVAL,
+            "city_interval": CITY_INTERVAL,
+            "last_ward_tick": last_ward_tick,
+            "last_area_tick": last_area_tick,
+            "last_city_tick": last_city_tick,
+        },
     }
+    if collect_tick_records:
+        results["tick_records"] = tick_records
+        results["ward_tick_records"] = ward_tick_records
 
-    results_dir = project_root / "results" / "inference"
-    results_dir.mkdir(parents=True, exist_ok=True)
-    results_path = results_dir / f"{scope}_{identifier}_{scenario_id}.json"
-    with results_path.open("w", encoding="utf-8") as fh:
-        json.dump(results, fh, indent=2, default=str)
+    results_path: Path | None = None
+    if persist_results:
+        results_dir = project_root / "results" / "inference"
+        results_dir.mkdir(parents=True, exist_ok=True)
+        results_path = results_dir / f"{scope}_{identifier}_{scenario_id}.json"
+        with results_path.open("w", encoding="utf-8") as fh:
+            json.dump(results, fh, indent=2, default=str)
 
     logger.info(
         "Simulation complete: %d ticks, %d arrived, saved → %s",

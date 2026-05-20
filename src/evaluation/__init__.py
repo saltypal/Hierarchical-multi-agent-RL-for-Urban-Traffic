@@ -1,5 +1,5 @@
-"""Evaluation helpers."""
+"""Evaluation package exports."""
 
-from .metrics import SimulationMetrics
+from .common.metrics import SimulationMetrics, aggregate_full_sweep, summarize_by_key
 
-__all__ = ["SimulationMetrics"]
+__all__ = ["SimulationMetrics", "aggregate_full_sweep", "summarize_by_key"]

@@ -15,6 +15,8 @@ from pathlib import Path
 
 import numpy as np
 
+from src.controllers.temporal_features import WARD_FEATURE_DIM, WARD_TEMPORAL_WINDOW
+
 try:
     import torch
     import torch.nn as nn
@@ -25,7 +27,7 @@ except ImportError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-OBSERVATION_DIM = 12
+OBSERVATION_DIM = WARD_TEMPORAL_WINDOW * WARD_FEATURE_DIM
 ACTION_DIM = 10
 
 
@@ -124,12 +126,37 @@ class WardAgent:
         self.policy.to(self.device)
 
         if model_path.exists():
-            state_dict = torch.load(
-                model_path,
-                map_location=self.device,
-                weights_only=True,
-            )
-            self.policy.load_state_dict(state_dict, strict=True)
+            state_dict = torch.load(model_path, map_location=self.device, weights_only=True)
+            if "mlp_extractor.policy_net.0.weight" in state_dict:
+                mapped_state_dict = {}
+                mapped_state_dict["net.0.weight"] = state_dict["mlp_extractor.policy_net.0.weight"]
+                mapped_state_dict["net.0.bias"] = state_dict["mlp_extractor.policy_net.0.bias"]
+                mapped_state_dict["net.2.weight"] = state_dict["mlp_extractor.policy_net.2.weight"]
+                mapped_state_dict["net.2.bias"] = state_dict["mlp_extractor.policy_net.2.bias"]
+                mapped_state_dict["net.4.weight"] = state_dict["action_net.weight"]
+                mapped_state_dict["net.4.bias"] = state_dict["action_net.bias"]
+                state_dict = mapped_state_dict
+            try:
+                self.policy.load_state_dict(state_dict, strict=True)
+            except RuntimeError:
+                inferred_obs_dim = self._infer_obs_dim_from_state_dict(state_dict)
+                if inferred_obs_dim is not None and inferred_obs_dim != obs_dim:
+                    logger.info(
+                        "Ward agent %s obs_dim override: %d -> %d",
+                        ward_id, obs_dim, inferred_obs_dim,
+                    )
+                    obs_dim = inferred_obs_dim
+                    if self.algorithm == "dqn":
+                        self.policy = DQNPolicyNetwork(obs_dim, action_dim, hidden)
+                    else:
+                        self.policy = WardMLPPolicyNetwork(obs_dim, action_dim, hidden)
+                    self.policy.to(self.device)
+                    self.policy.load_state_dict(state_dict, strict=True)
+                else:
+                    logger.warning(
+                        "Ward agent %s checkpoint mismatch at %s; using random init",
+                        ward_id, model_path,
+                    )
             logger.info(
                 "Ward agent %s loaded [%s] on %s <- %s",
                 ward_id, self.algorithm.upper(), self.device, model_path,
@@ -158,3 +185,12 @@ class WardAgent:
             logits = self._forward_logits(observation)
             probs = torch.softmax(logits, dim=-1)
         return probs.squeeze(0).detach().cpu().numpy()
+
+    @staticmethod
+    def _infer_obs_dim_from_state_dict(state_dict: dict[str, Any]) -> int | None:
+        for key, tensor in state_dict.items():
+            if key.endswith("net.0.weight") and hasattr(tensor, "shape") and len(tensor.shape) == 2:
+                return int(tensor.shape[1])
+            if key.endswith("q_net.0.weight") and hasattr(tensor, "shape") and len(tensor.shape) == 2:
+                return int(tensor.shape[1])
+        return None

@@ -1,17 +1,10 @@
-"""Core metrics container for simulation and training reporting."""
+"""Backward-compatible evaluation metric exports."""
 
-from __future__ import annotations
+from .common.metrics import METRIC_FIELDS, SimulationMetrics, aggregate_full_sweep, summarize_by_key
 
-from dataclasses import dataclass
-
-
-@dataclass
-class SimulationMetrics:
-    avg_travel_time: float = 0.0
-    avg_waiting_time: float = 0.0
-    throughput: float = 0.0
-    completed_trips: int = 0
-    avg_speed: float = 0.0
-    queue_length: float = 0.0
-    reroute_count: int = 0
-    ambulance_response_time: float = 0.0
+__all__ = [
+    "METRIC_FIELDS",
+    "SimulationMetrics",
+    "aggregate_full_sweep",
+    "summarize_by_key",
+]

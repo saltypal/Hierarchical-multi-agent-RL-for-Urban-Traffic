@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import random
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,12 @@ import numpy as np
 
 from src.sumo_env import SumoEnv
 from src.reward import WardRewardCalculator
+from src.controllers.temporal_features import (
+    WARD_FEATURE_DIM,
+    WARD_TEMPORAL_WINDOW,
+    build_ward_feature_frame,
+    pad_history,
+)
 
 from .ward_actions import WardAction
 
@@ -37,6 +44,9 @@ else:
 
 _GymBase = gym.Env if gym is not None else object
 
+OBSERVATION_DIM = WARD_TEMPORAL_WINDOW * WARD_FEATURE_DIM
+ACTION_DIM = 10
+
 
 @dataclass
 class WardAdapterConfig:
@@ -47,7 +57,7 @@ class WardAdapterConfig:
     gui: bool = False  # NEVER True during training
     scenario_id: str | list[str] = "normal"
     training_mode: bool = True
-    decision_interval_steps: int = 5
+    decision_interval_steps: int = WARD_TEMPORAL_WINDOW
     max_simulation_steps: int = 360
 
 
@@ -58,19 +68,9 @@ class StableBaselinesWardEnv(_GymBase):
     come from SUMO via ``SumoEnv``. This adapter only exposes the
     reset/step contract that SB3 expects.
 
-    Observation (12 dims):
-        [0]  vehicle_count
-        [1]  queue_count
-        [2]  queue_ratio
-        [3]  total_wait_proxy
-        [4]  max_wait_proxy
-        [5]  avg_speed
-        [6]  avg_route_length
-        [7]  ambulance_count
-        [8]  aggressive_count
-        [9]  heavy_vehicle_count
-        [10] predicted_pressure  (from GNN or synthetic during training)
-        [11] city_capacity_cap   (from city solver or synthetic during training)
+    Observation:
+        Flattened ``[30, 7]`` temporal stack:
+        congestion, queue, avg_speed, inflow, outflow, incident_flag, ambulance_flag
     """
 
     metadata = {"render_modes": ["human"]}
@@ -91,6 +91,8 @@ class StableBaselinesWardEnv(_GymBase):
         self.held_vehicle_ids: set[str] = set()
         self.last_invalid_action = False
         self._rng = random.Random(42)
+        self._ward_history: deque[np.ndarray] = deque(maxlen=WARD_TEMPORAL_WINDOW)
+        self._temporal_trace: list[dict[str, Any]] = []
 
         if isinstance(self.config.ward_id, str):
             self.ward_ids = [self.config.ward_id]
@@ -124,7 +126,7 @@ class StableBaselinesWardEnv(_GymBase):
         # Action and observation spaces
         self.action_space = spaces.Discrete(len(WardAction))
         self.observation_space = spaces.Box(
-            low=0.0, high=np.inf, shape=(12,), dtype=np.float32,
+            low=0.0, high=np.inf, shape=(OBSERVATION_DIM,), dtype=np.float32,
         )
 
     # ------------------------------------------------------------------
@@ -181,6 +183,8 @@ class StableBaselinesWardEnv(_GymBase):
         self._zone_type = self._load_zone_type(self.current_ward_id)
         self.reward_calc = WardRewardCalculator(self._zone_type)
         self.reward_calc.reset()
+        self._ward_history.clear()
+        self._temporal_trace.clear()
 
         sumocfg = (
             self._project_root / "maps" / os.getenv("HMRL_MAP_DIR", "processed")
@@ -188,9 +192,9 @@ class StableBaselinesWardEnv(_GymBase):
         )
 
         if self.sumo_env.is_running:
-            self.sumo_env.load_config(str(sumocfg))
-        else:
-            self.sumo_env.start(str(sumocfg), gui=self.config.gui)
+            self.sumo_env.stop()
+        self.sumo_env.start(str(sumocfg), gui=self.config.gui)
+        self._prime_history()
 
         return self._observation(), {"sumo_time": self.sumo_env.get_time()}
 
@@ -200,28 +204,36 @@ class StableBaselinesWardEnv(_GymBase):
         self.last_invalid_action = False
         self._apply_action(WardAction(int(action)))
 
+        accumulated_arrived = 0
+        accumulated_departed = 0
         for _ in range(self.config.decision_interval_steps):
             self.sumo_env.step()
             self.current_step += 1
             self._step_counter += 1
+            self._record_current_state(action)
+            accumulated_arrived += self.sumo_env.get_arrived_count()
+            accumulated_departed += self.sumo_env.get_departed_count()
             if self.sumo_env.get_min_expected_number() == 0:
                 break
 
         observation = self._observation()
         pressure = self._get_pressure()
-        arrived = self.sumo_env.get_arrived_count()
 
         ward_state = self.sumo_env.get_ward_summary(self._ward_edges)
+        # Override inflow and outflow with the aggregated values over the decision interval
+        ward_state["inflow"] = float(accumulated_departed)
+        ward_state["outflow"] = float(accumulated_arrived)
+
         reward = self.reward_calc.compute(
-            ward_state, arrived, gnn_pressure=pressure,
+            ward_state, accumulated_arrived, gnn_pressure=pressure,
             invalid_action=self.last_invalid_action,
         )
 
         terminated = self.sumo_env.get_min_expected_number() == 0
         truncated = self.current_step >= self.config.max_simulation_steps
 
-        # Collect GNN data every 30 steps (free)
-        if self._step_counter % 30 == 0:
+        # Collect GNN data every temporal window for backward compatibility.
+        if self._step_counter % WARD_TEMPORAL_WINDOW == 0:
             self._collect_gnn_snapshot(ward_state)
 
         info = {
@@ -240,44 +252,11 @@ class StableBaselinesWardEnv(_GymBase):
     # ------------------------------------------------------------------
 
     def _observation(self) -> np.ndarray:
-        vehicle_ids = self.sumo_env.get_vehicle_ids()
-        vehicle_count = len(vehicle_ids)
-
-        if vehicle_count == 0:
-            return np.zeros(12, dtype=np.float32)
-
-        speeds = [self.sumo_env.get_vehicle_speed(v) for v in vehicle_ids]
-        waits = [self.sumo_env.get_vehicle_waiting_time(v) for v in vehicle_ids]
-        route_lengths = [len(self.sumo_env.get_vehicle_route(v)) for v in vehicle_ids]
-        queue_count = sum(1 for s in speeds if s < 0.1)
-
-        ambulance_count = sum(
-            1 for v in vehicle_ids if self._vehicle_matches(v, ["ambulance"])
-        )
-        aggressive_count = sum(
-            1 for v in vehicle_ids if self._vehicle_matches(v, ["aggressive", "rash"])
-        )
-        heavy_count = sum(
-            1 for v in vehicle_ids if self._vehicle_matches(v, ["truck", "bus", "bmtc", "heavy"])
-        )
-
-        pressure = self._get_pressure()
-        cap = self._get_city_cap()
-
-        return np.asarray([
-            float(vehicle_count),                          # 0
-            float(queue_count),                            # 1
-            float(queue_count / vehicle_count),            # 2
-            float(sum(waits)),                             # 3
-            float(max(waits)),                             # 4
-            float(sum(speeds) / vehicle_count),            # 5
-            float(sum(route_lengths) / vehicle_count),     # 6
-            float(ambulance_count),                        # 7
-            float(aggressive_count),                       # 8
-            float(heavy_count),                            # 9
-            pressure,                                      # 10: GNN / synthetic
-            cap,                                           # 11: city cap / synthetic
-        ], dtype=np.float32)
+        return pad_history(
+            self._ward_history,
+            WARD_TEMPORAL_WINDOW,
+            WARD_FEATURE_DIM,
+        ).reshape(-1)
 
     def _get_pressure(self) -> float:
         """Get GNN pressure: real during inference, synthetic during training."""
@@ -293,6 +272,37 @@ class StableBaselinesWardEnv(_GymBase):
         if self.config.training_mode:
             return self._rng.uniform(0.5, 1.0)
         return self.current_city_cap
+
+    def _prime_history(self) -> None:
+        summary = self.sumo_env.get_ward_summary(self._ward_edges)
+        frame = build_ward_feature_frame(summary)
+        for _ in range(WARD_TEMPORAL_WINDOW):
+            self._ward_history.append(frame.copy())
+            self._temporal_trace.append(self._build_trace_entry(summary, WardAction.NO_OP))
+
+    def _record_current_state(self, action: int) -> None:
+        summary = self.sumo_env.get_ward_summary(self._ward_edges)
+        frame = build_ward_feature_frame(summary)
+        self._ward_history.append(frame)
+        self._temporal_trace.append(self._build_trace_entry(summary, WardAction(int(action))))
+
+    def _build_trace_entry(self, summary: dict[str, float], action: WardAction) -> dict[str, Any]:
+        return {
+            "time": self.current_step,
+            "step": self._step_counter,
+            "ward_id": self.current_ward_id,
+            "scenario_id": self.current_scenario_id,
+            "congestion_score": float(summary.get("congestion", 0.0)),
+            "queue_length": float(summary.get("queue", 0.0)),
+            "avg_speed": float(summary.get("avg_speed", 0.0)),
+            "inflow": float(summary.get("inflow", 0.0)),
+            "outflow": float(summary.get("outflow", 0.0)),
+            "incident_flag": float(summary.get("incident_flag", 0.0)),
+            "ambulance_flag": float(summary.get("ambulance_flag", 0.0)),
+            "ppo_action": action.name,
+            "area_directive": float(self.current_gnn_prediction),
+            "city_directive": float(self.current_city_cap),
+        }
 
     # ------------------------------------------------------------------
     # Action application (all through SumoEnv)
@@ -410,17 +420,9 @@ class StableBaselinesWardEnv(_GymBase):
         """Store a ward state snapshot for later GNN training."""
         self._gnn_buffer.append({
             "step": self._step_counter,
-            "features": np.array([
-                ward_state.get("congestion", 0.0),
-                0.0,  # delta congestion (computed post-hoc)
-                ward_state.get("queue", 0.0),
-                0.0,  # delta queue (computed post-hoc)
-                ward_state.get("avg_speed", 0.0),
-                ward_state.get("throughput", 0.0),
-                ward_state.get("incident_flag", 0.0),
-                self.current_city_cap,
-            ], dtype=np.float32),
+            "features": build_ward_feature_frame(ward_state),
             "congestion": ward_state.get("congestion", 0.0),
+            "temporal_trace": list(self._temporal_trace[-WARD_TEMPORAL_WINDOW:]),
         })
 
     def get_gnn_snapshot(self) -> dict[str, Any] | None:
@@ -428,6 +430,10 @@ class StableBaselinesWardEnv(_GymBase):
         if self._gnn_buffer:
             return self._gnn_buffer[-1]
         return None
+
+    def get_temporal_trace(self) -> list[dict[str, Any]]:
+        """Return the raw temporal trace for dataset builders."""
+        return list(self._temporal_trace)
 
 
 def _require_gymnasium() -> None:
