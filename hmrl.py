@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--algorithm",
         default="dqn",
-        choices=["ppo", "a2c", "dqn"],
+        choices=["ppo", "dqn"],
         help="RL algorithm used for ward agents",
     )
     parser.add_argument(

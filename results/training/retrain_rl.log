@@ -1,0 +1,19 @@
+[2026-05-20 18:12:15,175] [INFO] ============================================================
+[2026-05-20 18:12:15,175] [INFO]     HIERARCHICAL TRAFFIC RL RETRAINING CONSOLE
+[2026-05-20 18:12:15,175] [INFO] ============================================================
+[2026-05-20 18:12:15,175] [INFO] Target Map Directory : processed
+[2026-05-20 18:12:15,175] [INFO] SUMO GUI Enabled     : False
+[2026-05-20 18:12:15,175] [INFO] Execution Mode       : VERIFICATION (SMOKE TEST)
+[2026-05-20 18:12:15,176] [INFO] Episodes Per Model   : 2
+[2026-05-20 18:12:15,176] [INFO] Max Simulation Ticks : 1200
+[2026-05-20 18:12:15,176] [INFO] Logs Saved To        : D:\Bunker\BaseCamp\Hierarchical-multi-agent-RL-for-Urban-Traffic\results\training\retrain_rl.log
+[2026-05-20 18:12:15,176] [INFO] ============================================================
+[2026-05-20 18:12:15,177] [INFO] Loaded Wards (16) : ['ward_070', 'ward_071', 'ward_072', 'ward_017', 'ward_018', 'ward_019', 'ward_020', 'ward_007', 'ward_008', 'ward_009', 'ward_010', 'ward_011', 'ward_012', 'ward_013', 'ward_014', 'ward_015']
+[2026-05-20 18:12:15,177] [INFO] Loaded Scenarios (6) : ['normal', 'peak_congestion', 'breakdown_cascade', 'ambulance_emergency', 'vip_convoy', 'chaos_mode']
+[2026-05-20 18:12:15,177] [INFO] ------------------------------------------------------------
+[2026-05-20 18:12:15,177] [INFO] SUMO_HOME is set to: C:\Program Files (x86)\Eclipse\Sumo\
+[2026-05-20 18:12:15,177] [INFO] [STAGE 1/2] Starting PPO Training...
+[2026-05-20 18:12:15,227] [INFO] Training PPO on Multi-Ward Global Setup (16 wards, 2 episodes)
+[2026-05-20 18:12:18,980] [INFO] SUMO started on port 55570: D:\Bunker\BaseCamp\Hierarchical-multi-agent-RL-for-Urban-Traffic\maps\processed\ward_017\ward.sumocfg (gui=False)
+[2026-05-20 18:12:32,573] [INFO] SUMO stopped
+[2026-05-20 18:12:33,539] [INFO] SUMO started on port 55575: D:\Bunker\BaseCamp\Hierarchical-multi-agent-RL-for-Urban-Traffic\maps\processed\ward_070\ward.sumocfg (gui=False)

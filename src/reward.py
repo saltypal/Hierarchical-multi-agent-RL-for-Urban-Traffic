@@ -1,7 +1,11 @@
 """Zone-aware multi-component ward reward calculator.
 
-Computes a 12-component reward signal with zone-type modulation.
+Computes a 14-component reward signal with zone-type modulation.
 Designed to be called by the RL adapter using state from ``SumoEnv``.
+
+Penalties are weighted 2-3× heavier than rewards to strongly discourage
+congestion, deadlocks, and emergency blocking. Two additional penalty
+components target near-gridlock speed collapse and ambulance travel time.
 
 Does NOT import ``traci`` — receives all state via function arguments.
 """
@@ -18,22 +22,25 @@ from configs.traffic_profiles import get_zone_profile
 # ------------------------------------------------------------------
 
 DEFAULT_WEIGHTS: dict[str, float] = {
-    # Positive components
-    "w_throughput": 2.0,
-    "w_trip_completion": 5.0,
-    "w_avg_speed": 2.0,
-    "w_ambulance_progress": 3.0,
-    "w_congestion_reduction": 1.5,
-    # Negative components
-    "p_wait_time": 0.02,
-    "p_queue_length": 1.5,
-    "p_spillback": 2.0,
-    "p_deadlock": 10.0,
-    "p_incident_duration": 1.0,
-    "p_ambulance_blocking": 8.0,
-    "p_unfairness": 1.0,
+    # Positive components (moderate)
+    "w_throughput": 2.5,
+    "w_trip_completion": 6.0,
+    "w_avg_speed": 2.5,
+    "w_ambulance_progress": 5.0,
+    "w_congestion_reduction": 2.0,
+    # Negative components (STRONG — 2-3× base penalties)
+    "p_wait_time": 0.05,
+    "p_queue_length": 3.0,
+    "p_spillback": 4.0,
+    "p_deadlock": 20.0,
+    "p_incident_duration": 3.0,
+    "p_ambulance_blocking": 15.0,
+    "p_unfairness": 2.5,
+    # New penalty components
+    "p_speed_collapse": 5.0,
+    "p_ambulance_travel_time": 4.0,
     # GNN pressure penalty
-    "lambda_pressure": 2.0,
+    "lambda_pressure": 3.0,
 }
 
 # ------------------------------------------------------------------
@@ -42,32 +49,38 @@ DEFAULT_WEIGHTS: dict[str, float] = {
 
 ZONE_MODULATION: dict[str, dict[str, float]] = {
     "commercial": {
-        "w_throughput": 3.0,
-        "w_avg_speed": 2.5,
-        "w_trip_completion": 3.0,
+        "w_throughput": 3.5,
+        "w_avg_speed": 3.0,
+        "w_trip_completion": 4.0,
+        "p_queue_length": 4.0,
     },
     "residential": {
-        "p_unfairness": 2.5,
-        "p_queue_length": 0.8,
-        "w_throughput": 1.5,
+        "p_unfairness": 4.0,
+        "p_queue_length": 2.0,
+        "w_throughput": 2.0,
+        "p_speed_collapse": 3.0,
     },
     "mixed": {},
     "arterial": {
-        "w_throughput": 3.0,
-        "w_avg_speed": 2.5,
+        "w_throughput": 3.5,
+        "w_avg_speed": 3.0,
+        "p_spillback": 5.0,
     },
     "hospital_sensitive": {
-        "w_ambulance_progress": 10.0,
-        "p_ambulance_blocking": 20.0,
+        "w_ambulance_progress": 12.0,
+        "p_ambulance_blocking": 25.0,
+        "p_ambulance_travel_time": 8.0,
     },
     "bottleneck": {
-        "w_throughput": 3.5,
-        "w_congestion_reduction": 3.0,
+        "w_throughput": 4.0,
+        "w_congestion_reduction": 4.0,
+        "p_deadlock": 30.0,
     },
     "it_corridor": {
-        "w_throughput": 3.5,
-        "w_trip_completion": 4.0,
-        "w_avg_speed": 3.0,
+        "w_throughput": 4.0,
+        "w_trip_completion": 5.0,
+        "w_avg_speed": 3.5,
+        "p_queue_length": 4.0,
     },
 }
 
@@ -77,6 +90,8 @@ class WardRewardCalculator:
 
     The reward function balances throughput, safety, fairness, and
     emergency responsiveness. Zone type automatically adjusts weights.
+    Penalties are intentionally 2-3× stronger than rewards to firmly
+    discourage negative traffic outcomes.
 
     Reward formula::
 
@@ -92,6 +107,8 @@ class WardRewardCalculator:
             - p5 * incident_duration
             - p6 * ambulance_blocking
             - p7 * unfairness
+            - p8 * speed_collapse
+            - p9 * ambulance_travel_time
             - λ  * gnn_pressure * outflow
     """
 
@@ -140,6 +157,7 @@ class WardRewardCalculator:
         congestion = ward_state.get("congestion", 0.0)
         ambulance = ward_state.get("ambulance_flag", 0.0)
         incident = ward_state.get("incident_flag", 0.0)
+        waiting_time = ward_state.get("waiting_time", 0.0)
 
         # --- Positive components ---
         throughput_reward = w["w_throughput"] * avg_speed
@@ -154,7 +172,7 @@ class WardRewardCalculator:
         congestion_reward = w["w_congestion_reduction"] * max(congestion_delta, 0.0)
 
         # --- Negative components ---
-        wait_penalty = w["p_wait_time"] * ward_state.get("congestion", 0.0) * vehicle_count
+        wait_penalty = w["p_wait_time"] * congestion * vehicle_count
         queue_penalty = w["p_queue_length"] * queue
 
         # Spillback: queue growing faster than expected
@@ -172,11 +190,19 @@ class WardRewardCalculator:
         # Unfairness: penalize extreme congestion imbalance
         unfairness_penalty = w["p_unfairness"] * max(congestion - 0.5, 0.0)
 
+        # Speed collapse: near-gridlock conditions (avg_speed < 1.0 m/s)
+        speed_collapse_penalty = 0.0
+        if avg_speed < 1.0 and vehicle_count > 0:
+            speed_collapse_penalty = w["p_speed_collapse"] * (1.0 - avg_speed)
+
+        # Ambulance travel time penalty: ambulance stuck in traffic
+        ambulance_tt_penalty = w["p_ambulance_travel_time"] * ambulance * waiting_time * 0.01
+
         # GNN pressure penalty
         pressure_penalty = w["lambda_pressure"] * gnn_pressure * vehicle_count * 0.01
 
         # Invalid action penalty
-        invalid_penalty = 10.0 if invalid_action else 0.0
+        invalid_penalty = 15.0 if invalid_action else 0.0
 
         # --- Combine ---
         reward = (
@@ -192,6 +218,8 @@ class WardRewardCalculator:
             - incident_penalty
             - ambulance_block_penalty
             - unfairness_penalty
+            - speed_collapse_penalty
+            - ambulance_tt_penalty
             - pressure_penalty
             - invalid_penalty
         )

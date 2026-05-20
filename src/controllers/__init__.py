@@ -7,12 +7,12 @@ Contains the three control layers:
 """
 
 from .city_controller import CityController
-from .area_controller import AreaForecaster, WardPressureGNN
+from .area_controller import AreaForecaster, WardPressureGCN
 from .ward_agent import WardAgent
 
 __all__ = [
     "AreaForecaster",
     "CityController",
     "WardAgent",
-    "WardPressureGNN",
+    "WardPressureGCN",
 ]

@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from src.evaluation.training_eval import plot_rl_training
+
 import numpy as np
 
 try:
@@ -23,7 +25,7 @@ except ImportError:
     torch = None
 
 try:
-    from stable_baselines3 import PPO, A2C, DQN, SAC
+    from stable_baselines3 import PPO, DQN
     from stable_baselines3.common.callbacks import BaseCallback
 
     HAS_SB3 = True
@@ -34,7 +36,6 @@ logger = logging.getLogger(__name__)
 
 ALGORITHM_MAP = {
     "ppo": PPO if HAS_SB3 else None,
-    "a2c": A2C if HAS_SB3 else None,
     "dqn": DQN if HAS_SB3 else None,
 }
 
@@ -191,6 +192,7 @@ def train_global_agent(
     gui: bool = False,
     collect_gnn_data: bool = True,
     results_dir: Path | None = None,
+    max_simulation_steps: int = 1200,
 ) -> dict[str, Any]:
     """Train a multi-ward, multi-scenario RL agent using Stable-Baselines3.
 
@@ -201,11 +203,12 @@ def train_global_agent(
         ward_ids: List of Ward identifiers to randomize over.
         scenario_ids: List of Traffic scenarios to randomize over.
         project_root: Project root directory.
-        algorithm: One of ``"ppo"``, ``"a2c"``, ``"dqn"``.
+        algorithm: One of ``"ppo"`` or ``"dqn"``.
         episodes: Total training episodes.
         gui: Whether to show SUMO GUI during training.
         collect_gnn_data: If True, collect ward temporal traces for the area model.
         results_dir: Where to save training results (defaults to ``results/training/``).
+        max_simulation_steps: Maximum simulation steps per episode (default: 1200).
 
     Returns:
         Result dictionary with model path, training metrics, rewards, and GNN data path.
@@ -215,7 +218,7 @@ def train_global_agent(
 
     algo_cls = ALGORITHM_MAP.get(algorithm.lower())
     if algo_cls is None:
-        raise ValueError(f"Unknown algorithm: {algorithm}. Use: ppo, a2c, dqn")
+        raise ValueError(f"Unknown algorithm: {algorithm}. Use: ppo, dqn")
 
     # Import adapter lazily to avoid circular imports
     from src.rl.sb3_ward_adapter import StableBaselinesWardEnv
@@ -235,7 +238,7 @@ def train_global_agent(
         "scenario_id": scenario_ids,
         "training_mode": True,
         "decision_interval_steps": 30,
-        "max_simulation_steps": 1200,
+        "max_simulation_steps": max_simulation_steps,
     }
     env = StableBaselinesWardEnv(env_config)
 
@@ -308,7 +311,7 @@ def train_global_agent(
 
     env.close()
 
-    return {
+    result_dict = {
         "ward_ids": ward_ids,
         "algorithm": algorithm,
         "model_path": str(model_path),
@@ -318,3 +321,8 @@ def train_global_agent(
         "episodes": episode_tracker.episode_count,
         "episode_rewards": episode_tracker.episode_rewards,
     }
+
+    # Generate training plots
+    plot_rl_training(result_dict, algorithm, results_dir)
+
+    return result_dict
