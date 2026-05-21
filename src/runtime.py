@@ -100,9 +100,33 @@ def _vehicle_matches(sumo_env: SumoEnv, vehicle_id: str, tokens: list[str]) -> b
 
 
 def _most_congested_edge(sumo_env: SumoEnv, ward_edges: list[str]) -> str | None:
-    if not ward_edges:
+    # Prefer ward-specific edges; fall back to ALL sim edges if empty
+    # (matches training behaviour in sb3_ward_adapter._most_congested_edge)
+    candidate_edges = ward_edges if ward_edges else sumo_env.get_edge_ids()
+    if not candidate_edges:
         return None
-    return max(ward_edges, key=sumo_env.get_edge_halting_count)
+    return max(candidate_edges, key=sumo_env.get_edge_halting_count)
+
+
+def _prime_edge_traveltimes(sumo_env: SumoEnv, ward_edges: list[str]) -> None:
+    """Set edge travel times from measured speeds so rerouteTraveltime() works.
+
+    By default SUMO uses free-flow speeds for rerouting, meaning rerouteTraveltime()
+    finds the same path every time. This primes the edge cost table with current
+    measured speeds so congested edges get higher travel times and vehicles are
+    actually redirected to genuinely faster routes.
+    """
+    all_edges = ward_edges if ward_edges else sumo_env.get_edge_ids()
+    for edge_id in all_edges:
+        veh_ids = sumo_env.get_edge_vehicle_ids(edge_id)
+        if not veh_ids:
+            continue
+        speeds = [sumo_env.get_vehicle_speed(v) for v in veh_ids]
+        avg_speed = max(sum(speeds) / len(speeds), 0.1)
+        # Higher cost = more congested; use 100m/avg_speed as proxy travel time
+        cost = 100.0 / avg_speed
+        sumo_env.adapt_edge_traveltime(edge_id, cost)
+        _adapted_edges.setdefault("_prime", set()).add(edge_id)
 
 
 def _build_ward_observation(
@@ -150,11 +174,27 @@ def _build_ward_observation(
     ], dtype=np.float32)
 
 
+# Track edges that have had their traveltime adapted so we can reset them
+_adapted_edges: dict[str, set[str]] = {}  # ward_id -> set of edge_ids
+
+
+def _reset_adapted_edges(sumo_env: SumoEnv, ward_id: str) -> None:
+    """Reset previously adapted edge travel times to allow SUMO to recalculate."""
+    adapted = _adapted_edges.get(ward_id, set())
+    for edge_id in adapted:
+        try:
+            sumo_env.adapt_edge_traveltime(edge_id, -1.0)  # -1 = reset to default
+        except Exception:
+            pass
+    _adapted_edges[ward_id] = set()
+
+
 def _apply_ward_action(
     sumo_env: SumoEnv,
     action_idx: int,
     ward_edges: list[str],
     held_vehicle_ids: set[str],
+    ward_id: str = "",
 ) -> None:
     action = WardAction(int(action_idx))
 
@@ -165,6 +205,7 @@ def _apply_ward_action(
         WardAction.REROUTE_HOTSPOT_GROUP,
         WardAction.PRIORITIZE_ALTERNATE_EDGE,
     ):
+        _prime_edge_traveltimes(sumo_env, ward_edges)
         edge_id = _most_congested_edge(sumo_env, ward_edges)
         if edge_id is None:
             return
@@ -176,7 +217,10 @@ def _apply_ward_action(
         edge_id = _most_congested_edge(sumo_env, ward_edges)
         if edge_id is None:
             return
-        sumo_env.adapt_edge_traveltime(edge_id, 9999.0)
+        _prime_edge_traveltimes(sumo_env, ward_edges)
+        # Use a moderate penalty (300s) instead of 9999 to avoid permanent gridlock
+        sumo_env.adapt_edge_traveltime(edge_id, 300.0)
+        _adapted_edges.setdefault(ward_id, set()).add(edge_id)
         for v in sumo_env.get_edge_vehicle_ids(edge_id):
             sumo_env.reroute_vehicle(v)
         return
@@ -188,6 +232,7 @@ def _apply_ward_action(
         ]
         if not ambulance_ids:
             return
+        _prime_edge_traveltimes(sumo_env, ward_edges)
         protected_edges: set[str] = set()
         for amb_id in ambulance_ids:
             route = sumo_env.get_vehicle_route(amb_id)
@@ -200,13 +245,16 @@ def _apply_ward_action(
         return
 
     if action == WardAction.INCIDENT_REROUTE:
+        _prime_edge_traveltimes(sumo_env, ward_edges)
         for edge_id in ward_edges[:2]:
             for v in sumo_env.get_edge_vehicle_ids(edge_id):
                 sumo_env.reroute_vehicle(v)
         return
 
     if action == WardAction.HOLD_COMMERCIAL_INFLOW:
-        for edge_id in ward_edges:
+        # Only hold on a small subset of edges (boundary-like) to avoid freezing entire ward
+        hold_edges = ward_edges[:3]
+        for edge_id in hold_edges:
             for v in sumo_env.get_edge_vehicle_ids(edge_id):
                 sumo_env.set_vehicle_speed(v, 0.0)
                 held_vehicle_ids.add(v)
@@ -221,12 +269,14 @@ def _apply_ward_action(
         return
 
     if action == WardAction.REROUTE_AGGRESSIVE_DRIVERS:
+        _prime_edge_traveltimes(sumo_env, ward_edges)
         for v in _build_ward_vehicle_ids(sumo_env, ward_edges):
             if _vehicle_matches(sumo_env, v, ["aggressive", "rash"]):
                 sumo_env.reroute_vehicle(v)
         return
 
     if action == WardAction.REROUTE_HEAVY_VEHICLES:
+        _prime_edge_traveltimes(sumo_env, ward_edges)
         for v in _build_ward_vehicle_ids(sumo_env, ward_edges):
             if _vehicle_matches(sumo_env, v, ["truck", "bus", "bmtc", "heavy"]):
                 sumo_env.reroute_vehicle(v)
@@ -453,12 +503,30 @@ def run_simulation(
 
     city_controller = CityController(topology, selected_area_ids) if use_city else None
 
-    ward_edges = {
-        wid: _normalize_edge_list(
-            topology.get_ward_boundaries(wid).get("spawn_candidates", [])
-        )
-        for wid in selected_ward_ids
-    }
+    # Use ALL ward edges (internal + ingress) for summary & action targeting.
+    # Using only spawn_candidates means queries return empty vehicle lists
+    # because vehicles drive on interior edges, not entry edges — this caused
+    # identical metrics between Baseline and RL (bug: actions hit zero vehicles).
+    def _all_ward_edges(wid: str) -> list[dict]:
+        bounds = topology.get_ward_boundaries(wid)
+        combined: list = []
+        combined.extend(_normalize_edge_list(bounds.get("internal_edges", [])))
+        combined.extend(_normalize_edge_list(bounds.get("valid_ingress_edges", [])))
+        combined.extend(_normalize_edge_list(bounds.get("valid_egress_edges", [])))
+        if not combined:
+            # absolute fallback: use spawn_candidates
+            combined = _normalize_edge_list(bounds.get("spawn_candidates", []))
+        # deduplicate while preserving order
+        seen: set[str] = set()
+        deduped: list[dict] = []
+        for e in combined:
+            eid = e["edge_id"] if isinstance(e, dict) else str(e)
+            if eid not in seen:
+                seen.add(eid)
+                deduped.append(e if isinstance(e, dict) else {"edge_id": eid})
+        return deduped
+
+    ward_edges = {wid: _all_ward_edges(wid) for wid in selected_ward_ids}
     ward_hold_state: dict[str, set[str]] = {wid: set() for wid in selected_ward_ids}
     ward_pressure: dict[str, float] = {wid: 0.0 for wid in selected_ward_ids}
     ward_city_cap: dict[str, float] = {
@@ -573,11 +641,14 @@ def run_simulation(
                     last_action_tick[wid] = tick
                     if use_rl:
                         edges = [e["edge_id"] for e in ward_edges[wid]]
+                        # Reset previous edge travel time adaptations before applying new action
+                        _reset_adapted_edges(sumo_env, wid)
                         _apply_ward_action(
                             sumo_env,
                             action,
                             edges,
                             ward_hold_state[wid],
+                            ward_id=wid,
                         )
                         if WardAction(action) != WardAction.NO_OP:
                             reroute_count += 1

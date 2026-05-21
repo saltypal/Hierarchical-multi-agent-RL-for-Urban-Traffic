@@ -134,7 +134,16 @@ class StableBaselinesWardEnv(_GymBase):
     # ------------------------------------------------------------------
 
     def _load_ward_edges(self, ward_id: str) -> list[str]:
-        """Load spawn candidate edges from boundaries.json."""
+        """Load ALL ward-internal edges from boundaries.json.
+
+        Previously only loaded spawn_candidates (boundary entry edges), which
+        meant get_ward_summary returned near-zero readings because vehicles
+        drive on internal edges, not entry edges. This caused the GNN dataset
+        and RL observations to be nearly zero vectors.
+
+        Now loads internal_edges + valid_ingress_edges + valid_egress_edges so
+        observations reflect real traffic state, matching runtime.py behaviour.
+        """
         path = (
             self._project_root / "maps" / os.getenv("HMRL_MAP_DIR", "processed")
             / ward_id / "boundaries.json"
@@ -143,12 +152,25 @@ class StableBaselinesWardEnv(_GymBase):
             return []
         with path.open("r", encoding="utf-8") as fh:
             boundaries = json.load(fh)
-        candidates = boundaries.get("spawn_candidates", [])
-        # Extract just the edge_id string from the dictionary
-        return [
-            c["edge_id"] if isinstance(c, dict) else str(c)
-            for c in candidates
-        ]
+
+        combined: list = []
+        for key in ("internal_edges", "valid_ingress_edges", "valid_egress_edges"):
+            for e in boundaries.get(key, []):
+                combined.append(e["edge_id"] if isinstance(e, dict) else str(e))
+
+        if not combined:
+            # Absolute fallback: use spawn_candidates
+            for e in boundaries.get("spawn_candidates", []):
+                combined.append(e["edge_id"] if isinstance(e, dict) else str(e))
+
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        result: list[str] = []
+        for eid in combined:
+            if eid not in seen:
+                seen.add(eid)
+                result.append(eid)
+        return result
 
     def _load_zone_type(self, ward_id: str) -> str:
         """Load zone type from ward registry."""
@@ -353,7 +375,8 @@ class StableBaselinesWardEnv(_GymBase):
         if edge_id is None:
             self.last_invalid_action = True
             return
-        self.sumo_env.adapt_edge_traveltime(edge_id, 9999.0)
+        # Use moderate penalty (300s) to avoid permanent gridlock
+        self.sumo_env.adapt_edge_traveltime(edge_id, 300.0)
         self._reroute_vehicles_on_edge(edge_id)
 
     def _clear_ambulance_path(self) -> None:
@@ -380,7 +403,9 @@ class StableBaselinesWardEnv(_GymBase):
             self._reroute_vehicles_on_edge(edge_id)
 
     def _hold_inflow(self) -> None:
-        for edge_id in self._ward_edges:
+        # Only hold on boundary-like subset to avoid freezing entire ward
+        hold_edges = self._ward_edges[:3]
+        for edge_id in hold_edges:
             for v in self.sumo_env.get_edge_vehicle_ids(edge_id):
                 self.sumo_env.set_vehicle_speed(v, 0.0)
                 self.held_vehicle_ids.add(v)

@@ -1,0 +1,35 @@
+{
+  "Baseline": {
+    "avg_speed": 2.18102083142513,
+    "congestion": 0.7544942719530898,
+    "queue_length": 71.17999999999999,
+    "throughput": 124.6,
+    "travel_time": 253.29196422036117,
+    "waiting_time": 151.54996758735405,
+    "ambulance_delay": 67773.8849772033,
+    "incident_delay": 78877.0155189608,
+    "reroute_count": 0.0
+  },
+  "DQN": {
+    "avg_speed": 2.188578002030641,
+    "congestion": 0.7526032746166008,
+    "queue_length": 70.84666666666666,
+    "throughput": 128.2,
+    "travel_time": 255.4273794675411,
+    "waiting_time": 151.4597371786063,
+    "ambulance_delay": 67615.89329981194,
+    "incident_delay": 78719.02384156945,
+    "reroute_count": 30.0
+  },
+  "PPO": {
+    "avg_speed": 2.18102083142513,
+    "congestion": 0.7544942719530898,
+    "queue_length": 71.17999999999999,
+    "throughput": 124.6,
+    "travel_time": 253.29196422036117,
+    "waiting_time": 151.54996758735405,
+    "ambulance_delay": 67773.8849772033,
+    "incident_delay": 78877.0155189608,
+    "reroute_count": 30.0
+  }
+}

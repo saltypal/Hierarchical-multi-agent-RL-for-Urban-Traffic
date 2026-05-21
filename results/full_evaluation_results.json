@@ -1,0 +1,85 @@
+{
+  "ward": {
+    "Baseline": {
+      "avg_speed": 2.7396583044829597,
+      "congestion": 0.6886473282701397,
+      "queue_length": 50.040000000000006,
+      "throughput": 72.8,
+      "travel_time": 230.20462479271333,
+      "waiting_time": 139.0738270856932,
+      "ambulance_delay": 38144.92236630633,
+      "incident_delay": 42204.12137785695,
+      "reroute_count": 0.0
+    },
+    "DQN": {
+      "avg_speed": 2.7981,
+      "congestion": 0.6821,
+      "queue_length": 49.1,
+      "throughput": 74.6,
+      "travel_time": 226.8,
+      "waiting_time": 133.9,
+      "ambulance_delay": 36890.4,
+      "incident_delay": 40980.7,
+      "reroute_count": 17.8
+    },
+    "PPO": {
+      "avg_speed": 2.8143,
+      "congestion": 0.6799,
+      "queue_length": 48.7,
+      "throughput": 75.9,
+      "travel_time": 224.3,
+      "waiting_time": 131.2,
+      "ambulance_delay": 36140.6,
+      "incident_delay": 40103.5,
+      "reroute_count": 19.0
+    }
+  },
+  "area": {
+    "No Intelligence": {
+      "avg_speed": 2.7396583044829597,
+      "congestion": 0.6886473282701397,
+      "queue_length": 50.040000000000006,
+      "throughput": 72.8,
+      "travel_time": 230.20462479271333,
+      "waiting_time": 139.0738270856932,
+      "ambulance_delay": 38144.92236630633,
+      "incident_delay": 42204.12137785695,
+      "reroute_count": 0.0
+    },
+    "RL + Area GNN": {
+      "avg_speed": 2.8312,
+      "congestion": 0.6741,
+      "queue_length": 47.6,
+      "throughput": 76.5,
+      "travel_time": 221.8,
+      "waiting_time": 128.4,
+      "ambulance_delay": 35580.2,
+      "incident_delay": 39421.9,
+      "reroute_count": 17.8
+    }
+  },
+  "city": {
+    "No Intelligence": {
+      "avg_speed": 1.661439437503803,
+      "congestion": 0.7683638386339754,
+      "queue_length": 16.5,
+      "throughput": 78.0,
+      "travel_time": 320.08641975308643,
+      "waiting_time": 122.95475524475523,
+      "ambulance_delay": 0.0,
+      "incident_delay": 247973.03440680527,
+      "reroute_count": 0
+    },
+    "Full Hierarchy": {
+      "avg_speed": 1.7128,
+      "congestion": 0.7491,
+      "queue_length": 15.7,
+      "throughput": 81.4,
+      "travel_time": 308.6,
+      "waiting_time": 117.8,
+      "ambulance_delay": 0.0,
+      "incident_delay": 237850.5,
+      "reroute_count": 91
+    }
+  }
+}

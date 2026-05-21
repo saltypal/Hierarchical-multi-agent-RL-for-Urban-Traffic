@@ -595,6 +595,7 @@ def generate_report(
 # ======================================================================
 
 def main() -> None:
+    global MAX_TICKS
     parser = argparse.ArgumentParser(description="HMRL Evaluation Framework")
     parser.add_argument(
         "--mode", default="full",
@@ -606,7 +607,6 @@ def main() -> None:
     parser.add_argument("--max-ticks", type=int, default=MAX_TICKS)
     args = parser.parse_args()
 
-    global MAX_TICKS
     MAX_TICKS = args.max_ticks
 
     output_dir = PROJECT_ROOT / "results" / "evaluation"
