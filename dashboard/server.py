@@ -1,13 +1,3 @@
-"""Real-time simulation dashboard server.
-
-A lightweight Flask server that exposes simulation state as JSON via REST
-endpoints, consumed by the HTML/JS dashboard in ``dashboard/index.html``.
-
-Run alongside the simulation:
-    python dashboard/server.py
-
-Then open: http://localhost:5050
-"""
 
 from __future__ import annotations
 

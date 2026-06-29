@@ -19,3 +19,9 @@ maps/_legacy/
 tools/
 maps/
 redundant/
+configs/
+models/
+.gitignore
+SYSTEM_ARCHITECTURE.md
+results/
+redundant/

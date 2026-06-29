@@ -179,3 +179,80 @@ Here is the exact action catalog and how they affect the traffic simulation:
 | **7** | `RELEASE_HELD_FLOW` | **Throttling release:** Restores the speed control of all stochastically held vehicles back to SUMO (`speed = -1.0`), releasing them back into normal flow. |
 | **8** | `REROUTE_AGGRESSIVE_DRIVERS` | **Disorder management:** Filters all active vehicles in the ward for aggressive/rash drivers and triggers a rerouting event on them to distribute their impact. |
 | **9** | `REROUTE_HEAVY_VEHICLES` | **Heavy vehicle routing:** Filters all active vehicles for trucks and BMTC buses, and forces them to reroute to prevent heavy vehicles from blockading narrow lanes. |
+
+
+**Slide: Title**  
+- **Title:** Spatio‑Temporal GCN (STGCN) — Area Pressure Forecaster  
+- **One‑line:** Predicts per‑ward near‑future pressure by combining spatial graph convolution with temporal recurrence.
+
+**Slide: Why STGCN?**  
+- **Spatial Coupling:** traffic effects propagate along road/ward links (use maps → adjacency).  
+- **Temporal Dynamics:** congestion evolves over minutes — need memory across timesteps.  
+- **Parameter Efficiency:** shared weights generalize across wards and topologies.
+
+**Slide: High‑level Architecture**  
+- **Input:** `X_seq ∈ ℝ^{T×N×F}` (T=sequence length, N=wards, F=8 features).  
+- **Spatial (per‑timestep):** GCN projection: $H_t = \mathrm{ReLU}(\hat A\,X_t\,W_g)$.  
+- **Temporal:** GRU over each node’s spatial sequence → final state $h_T^i$.  
+- **Head:** $P_i = \sigma(W_o h_T^i)$ → pressure ∈ [0,1] per ward.
+
+**Slide: Core Math**  
+- **Adjacency normalization:** $ \hat A = D^{-1/2}(A+I)D^{-1/2} $  
+- **Spatial conv (per t):** $ H_t = \mathrm{ReLU}(\hat A\,X_t\,W_g) $  
+- **Output:** $ P_i = \sigma\big(W_o\,\mathrm{GRU}([H_{1,i},\dots,H_{T,i}])\big) $
+
+**Slide: Dataflow (mermaid)**
+
+```mermaid
+flowchart LR
+  SUMO[SUMO simulator\ndata each tick]
+  FB[Feature Builder\nX_t ∈ R^{N×F}]
+  A[Topology → A_hat\n(normalized adjacency)]
+  GCN[Spatial GCN per t\nH_t = ReLU(A_hat · X_t · W_g)]
+  NodeSeq[Node-wise sequences\n(H_1..H_T)_i]
+  GRU[GRU per node\nprocess sequence → h_T^i]
+  Head[Linear + Sigmoid\n→ P ∈ [0,1]^N]
+  Ward[Ward Agents\nreward shaping & obs]
+  SUMO --> FB
+  FB --> GCN
+  A --> GCN
+  GCN --> NodeSeq
+  NodeSeq --> GRU
+  GRU --> Head
+  Head --> Ward
+  Ward --> SUMO
+```
+
+**Slide: Training**  
+- **Labels:** supervised targets = observed congestion at +Δ seconds (collected during RL runs).  
+- **Windowing:** sliding windows of length `T` → sequences for STGCN.  
+- **Loss / Opt:** MSE loss, Adam optimizer.  
+- **Save:** `area_model_stgcn.pt` (weights only).
+
+**Slide: Runtime & Integration**  
+- **Ingest cadence:** append frame each tick; pad history until T frames.  
+- **Predict cadence:** predictions used at `AREA_INTERVAL` ticks (default 60).  
+- **Use of P:** shapes WardAgent reward/observation to discourage inflow into high‑pressure wards.
+
+**Slide: Practical Tips / Pitfalls**  
+- **Normalize features:** scale speeds, counts, congestion to stable ranges.  
+- **Adjacency:** compute from maps; fallback to identity if node counts mismatch.  
+- **Padding:** pad history with earliest frame (code does this).  
+- **Debugging:** log `X_seq`, `H_t`, and `P` for a small area to validate behavior.  
+- **Batching & device:** check tensor shapes `[B,T,N,F]` and run on GPU when available.
+
+**Slide: Quick demo snippet**  
+```python
+# minimal forward (pseudo)
+T, N, F, H = 10, 9, 8, 32
+x_seq = torch.rand(T, N, F)              # [T,N,F]
+a_hat = torch.tensor(adj, dtype=torch.float32)  # [N,N]
+model = SpatioTemporalGCN(in_features=F, hidden_dim=H, seq_len=T)
+pred = model(x_seq, a_hat)               # [N]
+print(pred.shape)  # -> torch.Size([N])
+```
+
+**Slide: Key takeaways**  
+- **STGCN = spatial + temporal:** GCN captures neighborhood effects; GRU captures evolution.  
+- **Maps matter:** adjacency encodes real connectivity so pressure predictions respect topology.  
+- **Use cases:** reward shaping, early congestion warning, guiding ward‑level RL decisions.

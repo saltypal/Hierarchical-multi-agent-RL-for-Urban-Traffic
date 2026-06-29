@@ -1,562 +1,199 @@
-# Hierarchical-multi-agent-RL-for-Urban-Traffic
-A hierarchical multi-agent reinforcement learning (HMARL) framework for large-scale urban traffic orchestration using SUMO + TraCI over real Bangalore road networks.
+# Hierarchical Multi-Agent Reinforcement Learning (HMARL) for Urban Traffic Control
 
-## Current Runnable Entrypoints
-
-- `python hmrl.py --mode preprocess --scenario-id wednesday_peak_techpark_maps_v1`
-  - scaffolds `maps/` area folders
-  - writes per-area preprocessing reports and SUMO command plans
-  - generates configurable OD matrix artifacts
-- `python hmrl.py --mode train_ppo --scope ward --sumo-config Traffic/sumo/config.sumocfg`
-  - runs SB3 PPO with the SUMO-backed ward adapter (requires `stable-baselines3` + `gymnasium`)
-- `python hmrl.py --mode train_dqn --scope ward --sumo-config Traffic/sumo/config.sumocfg --gui`
-  - runs the legacy hierarchical DQN loop
-
-
-# Hierarchical Multi-Agent Reinforcement Learning for Urban Traffic Optimization Using SUMO and TraCI
-
-## Project Overview
-
-This project proposes a scalable and adaptive urban traffic management framework using Reinforcement Learning (RL), SUMO (Simulation of Urban Mobility), and the TraCI API over realistic Bangalore road networks.
-
-The core idea is to model the city traffic system as a hierarchical network of intelligent Roadside Units (RSUs), where each RSU is responsible for managing traffic flow at a specific spatial level. Instead of using static traffic signal systems or predefined routing strategies, the system dynamically learns optimal traffic orchestration policies using RL algorithms such as DQN, PPO, and Actor-Critic methods.
-
-The framework is designed to operate on real Bangalore map segments extracted from OpenStreetMap (OSM), enabling experimentation over heterogeneous urban structures such as structured residential layouts, dense commercial regions, highways, roundabouts, and bottleneck-heavy junctions.
-
-The project aims to study how different RL algorithms perform under varying traffic topologies, road morphologies, traffic densities, and demographic driving behaviors, while also exploring hierarchical coordination between multiple traffic control agents.
+An advanced, scalable, and distributed traffic management framework that coordinates micro-level traffic signal adapters, meso-level graph neural network forecasters, and macro-level city route capacity balancers over realistic OpenStreetMap (OSM) road networks of Bengaluru, simulated inside Eclipse SUMO (Simulation of Urban MObility) and controlled via TraCI.
 
 ---
 
-# Core Motivation
+## System Architecture Overview
 
-Traditional traffic management systems suffer from several limitations:
+The core innovation of this system is resolving the curse of dimensionality in large-scale urban networks by utilizing a **three-tier hierarchical multi-agent architecture** that operates across progressive spatial and temporal scales:
 
-* Static signal timings
-* Lack of adaptive congestion handling
-* No coordination between neighboring intersections
-* Inability to scale dynamically to real-time urban traffic patterns
-* Poor handling of heterogeneous Indian traffic conditions
-
-Most existing RL-based traffic optimization systems are also limited because they:
-
-* focus only on a single junction,
-* use simplified road networks,
-* ignore large-scale coordination,
-* and do not evaluate algorithm suitability across different urban environments.
-
-This project addresses these limitations by introducing:
-
-* hierarchical traffic intelligence,
-* distributed multi-agent coordination,
-* and adaptive RL policy selection based on urban topology.
-
----
-
-# System Architecture
-
-The proposed architecture follows a hierarchical multi-agent structure.
-
-```text id="40l5aj"
-Vehicle Layer
-↓
-Local RSU Layer
-↓
-Area RSU Layer
-↓
-Regional RSU Layer
-↓
-City-Level Super RSU
+```
+                  ┌──────────────────────────────────────┐
+                  │      City-Level Macro Controller     │  ◄── Ticks every 120s
+                  │       (Linear Capacity caps solver)  │      (L3 - Macroscopic)
+                  └──────────────────┬───────────────────┘
+                                     │
+                     Capacity Caps   │   Aggregated Saturation
+                         (Top-down)  ▼   (Bottom-up)
+                  ┌──────────────────────────────────────┐
+                  │      Area-Level Meso Forecaster      │  ◄── Ticks every 60s
+                  │        (STGCN / GCN Predictor)       │      (L2 - Mesoscopic)
+                  └──────────────────┬───────────────────┘
+                                     │
+                  Pressure Signals   │   Aggregated Queues
+                         (Top-down)  ▼   (Bottom-up)
+                  ┌──────────────────────────────────────┐
+                  │     Ward-Level Micro RL Agents       │  ◄── Ticks every 30s
+                  │      (Discrete PPO/DQN Adapters)     │      (L1 - Microscopic)
+                  └──────────────────┬───────────────────┘
+                                     │
+                       Semantic      │   Raw Vehicle States
+                        Actions      ▼   (Every 1s)
+                  ┌──────────────────────────────────────┐
+                  │       Eclipse SUMO Simulator         │  ◄── Core simulation step
+                  │         (Bangalore Wards)            │      (Continuous)
+                  └──────────────────────────────────────┘
 ```
 
-Each layer operates at a different spatial abstraction level and has different responsibilities.
+---
+
+## The 3-Tier Hierarchical Layers
+
+### 1. Ward Layer (L1 - Microscopic)
+- **Role**: Directly controls traffic flow at localized ward regions and boundary intersections.
+- **Agent Type**: Discrete [Proximal Policy Optimization (PPO)](file:///d:/Bunker/BaseCamp/Hierarchical-multi-agent-RL-for-Urban-Traffic/models/ppo) or [Deep Q-Network (DQN)](file:///d:/Bunker/BaseCamp/Hierarchical-multi-agent-RL-for-Urban-Traffic/models/dqn) agents.
+- **Control Interval**: Action updates are evaluated every **30 simulation seconds** (Ward Tick).
+- **Observation Space**: A 210-dimensional flattened array consisting of a 30-timestep sliding historical window (`WARD_TEMPORAL_WINDOW`) across 7 localized features:
+  1. `congestion`: Delayed traffic ratio within the ward.
+  2. `queue`: Number of halted vehicles (speed $< 0.1\text{ m/s}$).
+  3. `avg_speed`: Average speed of active vehicles.
+  4. `inflow`: Ingress rate of boundary vehicles.
+  5. `outflow`: Throughput of exiting vehicles.
+  6. `incident_flag`: Number of active breakdowns or road blockages.
+  7. `ambulance_flag`: Active emergency vehicles needing priority.
+  - *Plus top-down directives*: Graph spatial pressure forecasts and city-level capacity caps.
+- **Action Space**: 10 high-level semantic actions defined in [ward_actions.py](file:///d:/Bunker/BaseCamp/Hierarchical-multi-agent-RL-for-Urban-Traffic/src/rl/ward_actions.py):
+  - `NO_OP` (0): Relinquishes control to default SUMO actuated timings.
+  - `REROUTE_HOTSPOT_GROUP` (1): Reroutes all vehicles on the ward's most congested edge.
+  - `DEPRIORITIZE_MOST_CONGESTED_EDGE` (2): Artificially penalizes travel time weights of a congested lane to deflect traffic.
+  - `CLEAR_AMBULANCE_PATH` (4): Clear corridors by force-rerouting surrounding vehicles ahead of active ambulances.
+  - `HOLD_COMMERCIAL_INFLOW` (6) & `RELEASE_HELD_FLOW` (7): Temporary inflow throttling.
+  - `REROUTE_AGGRESSIVE_DRIVERS` (8) & `REROUTE_HEAVY_VEHICLES` (9): Segregates traffic to redistribute local loads.
+
+### 2. Area Layer (L2 - Mesoscopic)
+- **Role**: Coordinates neighboring wards in an area (e.g. `HSR_Layout` or `BTM_Layout`) to prevent downstream deadlocks and maximize green wave alignment.
+- **Model Type**: Spatio-Temporal Graph Convolutional Network (STGCN) combining Graph Convolutions with Gated Recurrent Units (GRU) for sequence learning, implemented in [area_controller.py](file:///d:/Bunker/BaseCamp/Hierarchical-multi-agent-RL-for-Urban-Traffic/src/controllers/area_controller.py).
+- **Control Interval**: Predicts near-future ward pressure every **60 simulation seconds** (Area Tick).
+- **Function**: Uses the spatial topology ( adjacency matrix normalized via $\hat A = D^{-1/2}(A+I)D^{-1/2}$) to forecast congestion patterns 30 seconds ahead. It integrates L3 capacity caps, shaping the pressure targets sent to lower-level ward agents.
+
+### 3. City Layer (L3 - Macroscopic)
+- **Role**: Global capacity allocator and path-routing optimizer.
+- **Model Type**: Pure mathematical optimization and graph routing solver, implemented in [city_controller.py](file:///d:/Bunker/BaseCamp/Hierarchical-multi-agent-RL-for-Urban-Traffic/src/controllers/city_controller.py).
+- **Control Interval**: Executes every **120 simulation seconds** (City Tick), or triggers instantly upon detecting a critical incident/extreme congestion alert.
+- **Function**: Constructs a macro directed graph of inter-area connectivity. It calculates pressure-proportional balancing capacity caps ($c \in [0.2, 1.0]$) for each area. If an area suffers severe congestion or breakdowns, the L3 controller throttles neighboring inbound corridors to prevent cascading gridlocks.
 
 ---
 
-# 1. Vehicle Layer
+## Traffic Demand & Incidents Pipeline
 
-Each vehicle in the SUMO simulation acts as a dynamic traffic entity.
+The traffic simulation engine implemented in [traffic_generator.py](file:///d:/Bunker/BaseCamp/Hierarchical-multi-agent-RL-for-Urban-Traffic/src/traffic_generator.py) uses a realistic hybrid model:
 
-Using the TraCI API, every vehicle continuously communicates information such as:
-
-* position,
-* speed,
-* acceleration,
-* waiting time,
-* lane occupancy,
-* route information,
-* destination,
-* congestion state.
-
-Vehicles themselves are not initially treated as independent RL agents. Instead, they function as observable entities controlled indirectly by higher-level RSUs.
+1. **Deterministic Pre-compilation (Phase 1)**:
+   - Generates vehicles using a **70/30 spatial split**: 70% spawn stochastically at boundary ingress edges (weighted by lane widths and historical priors) while 30% represent local trip starts.
+   - Trips are compiled into SUMO-native route files (`.rou.xml`), bypassing TraCI IPC socket overhead to maximize CPU performance during RL step training.
+2. **Stochastic Real-time Disturbances (Phase 2)**:
+   - At every single tick, rolls a probability check against the scenario's `breakdown_prob` (up to 8% in `chaos_mode`).
+   - If triggered, halts a random active vehicle (`speed = 0.0`), creating a physical blockage. This tests the agents' capacity to reroute traffic around hotspots.
+3. **Vehicle Profiles**: Incorporates heterogeneous Indian traffic conditions defined in [vehicle_profiles.py](file:///d:/Bunker/BaseCamp/Hierarchical-multi-agent-RL-for-Urban-Traffic/configs/vehicle_profiles.py), including cars, bikes, slow drivers, aggressive/rash drivers, heavy trucks, BMTC buses, and priority ambulances.
 
 ---
 
-# 2. Local RSU Layer
+## Project Directory Structure
 
-A Local RSU manages a specific traffic region such as:
-
-* a single intersection,
-* a roundabout,
-* a corridor,
-* or a small road segment.
-
-This layer performs fine-grained traffic control operations.
-
-## Responsibilities
-
-* Traffic signal phase control
-* Adaptive green-time allocation
-* Queue balancing
-* Local congestion reduction
-* Lane prioritization
-* Emergency vehicle handling
-
-## State Space
-
-The RL agent observes:
-
-* queue length,
-* waiting time,
-* average vehicle speed,
-* vehicle density,
-* lane occupancy,
-* incoming and outgoing traffic rates.
-
-## Action Space
-
-The agent performs actions such as:
-
-* switching signal phases,
-* extending or reducing green duration,
-* enabling lane priorities,
-* applying local rerouting policies.
-
----
-
-# 3. Area RSU Layer
-
-Multiple Local RSUs are coordinated by an Area RSU.
-
-An Area RSU represents a larger urban locality such as:
-
-* HSR Layout,
-* Koramangala,
-* Indiranagar,
-* Bellandur.
-
-The Area RSU prevents neighboring intersections from making conflicting local decisions.
-
-For example:
-
-* one junction should not aggressively clear traffic if it causes downstream deadlock in adjacent intersections.
-
-## Responsibilities
-
-* Inter-junction coordination
-* Area-wide traffic balancing
-* Congestion propagation control
-* Coordinated signal timing
-* Corridor optimization
-
----
-
-# 4. Regional RSU Layer
-
-Regional RSUs coordinate multiple Area RSUs.
-
-Examples:
-
-* Bangalore South,
-* East Bangalore,
-* Central Bangalore.
-
-This layer performs macro-scale traffic orchestration.
-
-## Responsibilities
-
-* Traffic distribution between areas
-* Peak-hour balancing
-* Route pressure redistribution
-* Regional congestion minimization
-
-The Regional RSU operates using aggregated traffic states rather than low-level junction states.
-
----
-
-# 5. Super Master RSU
-
-The highest level in the hierarchy is the city-level Super Master RSU.
-
-This layer does not directly control traffic signals. Instead, it acts as a strategic meta-controller.
-
-## Responsibilities
-
-* Global traffic optimization
-* City-wide congestion monitoring
-* Emergency response coordination
-* Reward shaping for lower-level agents
-* Large-scale rerouting policies
-* Dynamic policy adaptation
-
-The Super Master RSU enables scalable intelligent traffic management for the entire simulated Bangalore city.
-
-
-City RSU
+```
+.
+├── configs/                     # System configurations
+│   ├── hierarchy/               # Area & ward linkage registries
+│   ├── scenarios.py             # Traffic scenarios (normal, peak_congestion, chaos_mode)
+│   └── vehicle_profiles.py      # Vehicle physics profiles & XML generation
 │
-├── Regional Area RSUs
-│      ├── Area RSUs
-│      │      ├── Local Area RSUs
-│      │      │      ├── Junctions
-│      │      │      └── Vehicles
+├── src/                         # Core Python modules
+│   ├── controllers/             # Hierarchical controller logic
+│   │   ├── area_controller.py   # L2 STGCN forecaster
+│   │   ├── city_controller.py   # L3 Macro Graph Solver
+│   │   └── ward_agent.py        # L1 PPO / DQN wrapper
+│   │
+│   ├── rl/                      # Reinforcement learning components
+│   │   ├── sb3_ward_adapter.py  # Gym/Gymnasium wrapper for SUMO env
+│   │   └── ward_actions.py      # L1 semantic discrete action adapter
+│   │
+│   ├── runtime.py               # Main simulation orchestration loop
+│   ├── sumo_env.py              # SUMO TraCI abstraction layer
+│   └── topology.py              # Network parser & ward stitching utilities
+│
+├── dashboard/                   # Real-time Web UI Dashboard
+│   ├── server.py                # Flask CORS-REST server
+│   └── index.html               # CSS/JS dashboard interface
+│
+├── models/                      # Saved PyTorch checkpoints for RL and GNN models
+│
+├── maps/                        # GIS boundaries and network assets
+│
+├── evaluate.py                  # Structured evaluation framework
+├── hmrl.py                      # Master inference script & entrypoint
+└── requirements.txt             # Python dependency manifest
+```
 
 ---
 
-# Realistic Bangalore Traffic Modeling
+##  Installation & Environment Setup
 
-Unlike synthetic road networks, this project uses realistic Bangalore maps extracted from OpenStreetMap.
+### 1. Install SUMO
+Ensure that Eclipse SUMO is installed on your operating system.
+- **Windows**: Download the installer from the [SUMO Download Page](https://sumo.dlr.de/docs/Downloads.shtml) and run it.
+- **Linux**: Install via apt:
+  ```bash
+  sudo apt-get install sumo sumo-tools sumo-doc
+  ```
+- **Set Environment Variable**: Make sure `SUMO_HOME` is set to your SUMO installation folder (e.g. `C:\Program Files (x86)\Eclipse\Sumo`).
 
-Different Bangalore areas are selected to represent different urban morphologies and traffic behaviors.
-
-| Area                 | Characteristics           |
-| -------------------- | ------------------------- |
-| HSR Layout           | Structured grid roads     |
-| Koramangala          | Mixed urban traffic       |
-| Bellandur            | IT corridor congestion    |
-| Silk Board           | Chaotic merging traffic   |
-| Electronic City      | Highway + urban hybrid    |
-| Indiranagar          | Dense commercial traffic  |
-| Tin Factory Junction | Bottleneck-heavy topology |
-
-Each area is converted into a normalized SUMO simulation environment using Python preprocessing scripts.
-
-The preprocessing pipeline includes:
-
-* map extraction,
-* junction normalization,
-* lane standardization,
-* route generation,
-* ID normalization,
-* traffic flow generation.
+### 2. Install Python Dependencies
+Set up your virtual environment and install the required libraries:
+```bash
+pip install -r requirements.txt
+```
 
 ---
 
-# Reinforcement Learning Framework
+##  Usage Guide
 
-The project evaluates multiple RL algorithms across different traffic environments.
+### 📂 1. Preprocessing and Map Stitching
+Before running a simulation, ensure your ward map assets are parsed and preprocessed:
+- Map directory target is resolved via the `HMRL_MAP_DIR` environment variable (defaults to `"processed"`).
+- Wards are automatically stitched together by the `Topology` module during city-level executions.
 
-The main objective is not only traffic optimization, but also determining which RL algorithm performs best under specific urban conditions.
+### 🌐 2. Running a Simulation with GUI and Dashboard
+To run a city-level simulation of HSR Layout and BTM Layout with pre-trained models, opening the SUMO GUI and spinning up the real-time metrics dashboard:
 
----
+```bash
+python hmrl.py --scope city --areas HSR_Layout BTM_Layout --scenario chaos_mode --algorithm ppo --gui --max-ticks 900
+```
 
-# RL Algorithms Used
+- **SUMO GUI**: A window will open where you can watch individual vehicle movements and traffic lights.
+- **Dashboard UI**: Once the log prints `[dashboard] Starting server`, open your browser to **`http://localhost:5050`** to view real-time metrics, queue trends, area forecasts, and active actions.
 
-## 1. DQN (Deep Q-Network)
+### 📊 3. Running the Ablation Evaluation Framework
+To run systematic benchmarks comparing progressively intelligent layers against a baseline (No RL) across all scenarios:
 
-Best suited for:
+```bash
+# Run a quick check across representative wards
+python evaluate.py --mode quick --max-ticks 300
 
-* discrete traffic signal control,
-* small intersections,
-* simple junctions.
-
-### Suitable Environments
-
-* 3-way intersections
-* 4-way intersections
-* structured grids
-
----
-
-## 2. PPO (Proximal Policy Optimization)
-
-Best suited for:
-
-* large-scale dynamic environments,
-* continuous adaptation,
-* heterogeneous traffic conditions,
-* scalable coordination.
-
-### Suitable Environments
-
-* dense urban areas,
-* variable traffic patterns,
-* large road networks,
-* multi-agent systems.
+# Run a full hierarchical (Ward + Area + City) simulation evaluation
+python evaluate.py --mode city --scenario chaos_mode --max-ticks 900
+```
+Upon completion, the framework writes detailed comparative plots and text files to **`results/evaluation/`**:
+- `evaluation_report.txt`: Percentage improvement summaries.
+- `congestion_and_speed.png`: Comparative time-series trends.
+- `ambulance_and_routing.png`: Delay reductions for priority vehicles.
 
 ---
 
-## 3. Actor-Critic Methods (A2C/A3C)
-
-Best suited for:
-
-* hierarchical coordination,
-* multi-agent collaboration,
-* real-time adaptive decision making.
-
-### Suitable Environments
-
-* regional coordination,
-* RSU communication,
-* large-scale orchestration.
-
----
-
-# Hierarchical RL Strategy
-
-Different RL algorithms are assigned to different hierarchy levels.
-
-| Layer            | Recommended RL Model      |
-| ---------------- | ------------------------- |
-| Local RSU        | DQN / Double DQN          |
-| Area RSU         | PPO                       |
-| Regional RSU     | Actor-Critic              |
-| Super Master RSU | PPO + Actor-Critic Hybrid |
-
-This enables:
-
-* efficient local control,
-* stable regional coordination,
-* scalable city-level optimization.
-
----
-
-# Experimental Study
-
-The project performs comparative analysis across:
-
-* road topologies,
-* traffic densities,
-* demographic patterns,
-* RL algorithms,
-* hierarchical coordination strategies.
-
----
-
-# Topology-Based Evaluation
-
-The algorithms are tested on:
-
-* 3-way junctions,
-* 4-way intersections,
-* roundabouts,
-* arterial corridors,
-* grid-based layouts,
-* mixed urban structures.
-
----
-
-# Traffic Conditions
-
-Experiments include:
-
-* low-density traffic,
-* medium-density traffic,
-* high-density traffic,
-* peak-hour bursts,
-* stochastic congestion conditions.
-
----
-
-# Indian Traffic Demography Modeling
-
-The simulation incorporates heterogeneous Indian traffic conditions:
-
-* cars,
-* bikes,
-* buses,
-* trucks,
-* autos.
-
-Behavioral parameters include:
-
-* lane discipline,
-* overtaking aggressiveness,
-* acceleration variability,
-* congestion response patterns.
-
-This significantly improves realism compared to traditional traffic RL studies.
-
----
-
-# Evaluation Metrics
-
-The framework is evaluated using both traffic metrics and RL performance metrics.
-
-## Traffic Metrics
-
-* Average waiting time
-* Queue length
-* Throughput
-* Average travel time
-* Average speed
-* Fuel consumption
-* CO₂ emissions
-* Stop frequency
-
-## RL Metrics
-
-* Cumulative reward
-* Convergence stability
-* Training efficiency
-* Scalability
-* Reward variance
-* Policy robustness
-
----
-
-# Expected Outcomes
-
-The project aims to:
-
-* reduce congestion,
-* improve traffic flow,
-* minimize waiting time,
-* reduce fuel consumption,
-* improve regional coordination,
-* identify optimal RL strategies for different urban structures,
-* and demonstrate scalable hierarchical traffic intelligence.
-
----
-
-# Key Research Contribution
-
-The primary contribution of this work is:
-
-> Adaptive RL policy selection and hierarchical multi-agent coordination for heterogeneous urban traffic environments.
-
-Instead of assuming a single RL model works universally, the project investigates:
-
-* which RL models work best,
-* under which traffic conditions,
-* for which road structures,
-* and at what hierarchy level.
-
-This makes the work significantly more research-oriented and scalable than conventional traffic signal optimization systems.
-
----
-
-# Final Refined One-Paragraph Version
-
-> This project proposes a hierarchical multi-agent reinforcement learning framework for large-scale urban traffic optimization using SUMO and the TraCI API over realistic Bangalore road networks. The system models traffic control as a distributed RSU-based architecture, where local RSUs manage individual intersections and road segments, while higher-level RSUs coordinate area-level, regional, and city-wide traffic flow. Real Bangalore regions such as HSR Layout, Bellandur, and Koramangala are extracted from OpenStreetMap and converted into standardized SUMO simulation environments. Reinforcement learning algorithms including DQN, PPO, and Actor-Critic methods are trained and benchmarked across heterogeneous traffic topologies, varying congestion conditions, and Indian demographic traffic behaviors. The project aims to determine the optimal RL strategy for different urban morphologies while minimizing congestion, queue length, waiting time, fuel consumption, and emissions through scalable hierarchical coordination and adaptive traffic intelligence.
-======================================
-also, the source and destinations, or routes, are they defined already in osm maps when converted? can i automate the defining of routes and source destiantions as houses/buildings/offices and can i define the frequency or how the traffic is from google maps for every area on a specific day? so i have decided that i will consider only one day (wednesday because its the peak), set the routes majorly towards techparks now tell me a way we can accomplish this.
-So here is my proposed system design:
-
-I want you to take the current code as base inspiration and modularize it completely and make use of it.
-
-we will have different folders and python filesfor different things, including notebooks
-
-So our system includes multiple agents at different levels
---------------------------
-Build the preprocessing and map-generation pipeline for a hierarchical reinforcement learning based Bengaluru traffic optimization project using SUMO and TraCI.
-
-The project structure should contain a root folder called:
-
-maps/
-
-   Inside the maps folder, create subfolders for the top 10 selected Bengaluru areas from different traffic and demographic regions. Example areas may include:
-
-* HSR Layout
-* Koramangala
-* Bellandur
-* Electronic City
-* Indiranagar
-* Whitefield
-* Silk Board
-* Tin Factory
-* JP Nagar
-* Hebbal
-
-Each area folder should contain:
-
-* Raw OpenStreetMap (.osm) files (keep placeholder, I will add it soon)
-* SUMO network files (.net.xml) (Shall be added later)
-* Route files (.rou.xml) (Shall be added later)
-* Trip files (.trips.xml) (Shall be added later)
-* Additional grid/intersection metadata XML files if needed (Shall be added later)
-* Preprocessed and normalized network outputs (Shall be added later)
-
-The OSM maps extracted initially will not be perfectly simulation-ready. The goal is to automatically preprocess and standardize them using scripts instead of manually modifying maps using SUMO NetEdit as much as possible.
-
-Inside the root maps folder, create a Jupyter Notebook named:
-
-map_preprocessing_pipeline.ipynb
-
-This notebook should automatically iterate through all area folders and perform the following pipeline for each Bengaluru region:
-
-1. Detect and load the raw OSM map file.
-2. Convert the OSM map into SUMO-compatible network files using SUMO tools such as:
-   * netconvert
-   * polyconvert
-   * randomTrips.py
-   * duarouter
-3. Automatically normalize and standardize:
-   * edge IDs
-   * node IDs
-   * lane naming
-   * traffic light naming
-   * junction labeling
-   * route identifiers
-4. Ensure that edge naming follows a uniform convention across all Bengaluru regions so RL state extraction becomes consistent.
-5. Automatically clean and preprocess problematic map structures such as:
-   * disconnected roads
-   * duplicate edges
-   * malformed junctions
-   * invalid lane connections
-   * overly complex intersections
-   * missing traffic signals
-6. Use only scripts and automated preprocessing as much as possible instead of manual NetEdit corrections.
-7. Generate realistic SUMO network outputs:
-   * .net.xml
-   * .edg.xml
-   * .nod.xml
-   * .con.xml
-   * .poly.xml
-8. Automatically classify junctions into categories such as:
-   * 3-way intersections
-   * 4-way intersections
-   * roundabouts
-   * arterial merges
-   * corridor junctions
-9. Create metadata JSON or CSV files for every area containing:
-   * number of junctions
-   * number of edges
-   * average lane count
-   * traffic signal count
-   * road hierarchy statistics
-   * junction classifications
-10. Generate visualization outputs for each area:
-* rendered road graph
-* junction overlays
-* cluster overlays
-* traffic corridor highlighting
-11. Automatically divide each area into RL clusters.
-A cluster represents:
-* 2–5 nearby traffic-dependent junctions controlled by one RL agent.
-Cluster generation should consider:
-* spatial proximity,
-* shared arterial roads,
-* congestion dependency,
-* corridor continuity.
-12. Export cluster metadata for later RL training.
-13. Prepare route-generation placeholders for future traffic demand simulation.
-Future route generation should support:
-* residential-to-tech-park traffic,
-* office rush-hour flows,
-* Wednesday peak-hour traffic modeling,
-* probabilistic origin-destination generation.
-14. The notebook should be modular and reusable for adding future Bengaluru regions.
-15. The entire preprocessing pipeline should be designed for scalable hierarchical reinforcement learning experimentation over realistic Bengaluru traffic environments using SUMO and TraCI.
-
-===============================================
-
-Now let's discuss about Src folder
-inside SRC folder, we should have code that manages all 
-Your src/ folder is:
-
-simulation orchestration,
-RL environments,
-RSU coordination,
-training,
-evaluation,
-Traffic intelligence.
-
+## 🧪 Mathematical Formulations
+
+### L1 Reward Function (Microscopic Optimization)
+The Ward RL agent's step reward is shaped to minimize congestion metrics locally:
+$$Reward_t = - \left( w_1 \cdot \text{QueueLength}_t + w_2 \cdot \text{WaitingTime}_t + w_3 \cdot \text{IncidentDelay}_t + w_4 \cdot \text{AmbulanceDelay}_t \right)$$
+- If the agent successfully clears pathways for emergency vehicles or reroutes traffic around blockages, the delays drop, giving a higher reward.
+
+### L2 Graph Spatial Convolution (Mesoscopic Pressure)
+Wards are treated as nodes in a graph $G = (V, E)$, with edges representing adjacent road connectivity. The Area GNN predicts the future ward pressure $P \in [0, 1]^N$ using:
+$$H^{(l+1)} = \sigma \left( \hat{A} H^{(l)} W^{(l)} \right)$$
+Where $\hat{A}$ is the normalized adjacency matrix, $H^{(l)}$ represents node features at layer $l$, and $W^{(l)}$ is the layer weight matrix.
+
+### L3 Capacity Solver (Macroscopic Balancing)
+The city controller determines capacity caps $C_k \in [0.2, 1.0]$ for each Area $k$:
+$$C_k = 1.0 - \left( 0.6 \cdot \frac{Congestion_k}{\max_j Congestion_j} \right)$$
+If a neighboring area $j$ has severe congestion, outbound capacities of adjacent areas are throttled to prevent upstream gridlock propagation:
+$$C_{\text{neighbor}} \leftarrow \max(0.2, C_{\text{neighbor}} - 0.15 \cdot Congestion_j)$$
